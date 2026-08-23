@@ -12,6 +12,11 @@ override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
+infra/modules/lambda-function/dist/
+
+# Python
+__pycache__/
+*.pyc
 
 # Node / frontend
 frontend/node_modules/

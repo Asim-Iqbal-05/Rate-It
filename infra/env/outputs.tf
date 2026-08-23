@@ -21,3 +21,11 @@ output "uploads_bucket_name" {
 output "frontend_bucket_name" {
   value = module.s3_frontend.bucket_name
 }
+
+output "media_service_function_name" {
+  value = module.media_service.function_name
+}
+
+output "experience_service_function_name" {
+  value = module.experience_service.function_name
+}
