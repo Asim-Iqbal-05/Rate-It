@@ -75,3 +75,26 @@ module "experience_service" {
 
   additional_policy_json = data.aws_iam_policy_document.experience_service.json
 }
+
+# --- Phase 4: API Gateway + write path -----------------------------------
+
+module "api_gateway" {
+  source = "../modules/api-gateway"
+
+  project_name          = var.project_name
+  aws_region            = var.aws_region
+  cognito_user_pool_id  = module.cognito.user_pool_id
+  cognito_app_client_id = module.cognito.app_client_id
+  allowed_origins       = var.upload_cors_origins
+
+  routes = {
+    "GET /api/media/upload-url" = {
+      function_name = module.media_service.function_name
+      invoke_arn    = module.media_service.alias_invoke_arn
+    }
+    "POST /api/experiences" = {
+      function_name = module.experience_service.function_name
+      invoke_arn    = module.experience_service.alias_invoke_arn
+    }
+  }
+}

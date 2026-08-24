@@ -29,3 +29,7 @@ output "media_service_function_name" {
 output "experience_service_function_name" {
   value = module.experience_service.function_name
 }
+
+output "api_endpoint" {
+  value = module.api_gateway.api_endpoint
+}
