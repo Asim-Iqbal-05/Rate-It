@@ -1,16 +1,17 @@
-import { useAuth } from "../context/AuthContext";
+import { AppHeader } from "../components/AppHeader";
 
 // Placeholder for the real feed screen (app PRD §8 Step 2) - this page
 // only exists to prove the auth shell works end-to-end: if you can see
 // this, your token was accepted and the protected route held.
 export function HomePage() {
-  const { username, signOut } = useAuth();
-
   return (
-    <div className="home-page">
-      <h1>Logged in as {username}</h1>
-      <p>The feed screen isn't built yet - this confirms the auth shell works.</p>
-      <button onClick={signOut}>Log out</button>
+    <div className="min-h-screen bg-neutral-50 dark:bg-neutral-950">
+      <AppHeader />
+      <main className="mx-auto max-w-2xl px-4 py-16 text-center">
+        <p className="text-neutral-500 dark:text-neutral-400">
+          The feed screen isn&apos;t built yet - this page just confirms the auth shell works.
+        </p>
+      </main>
     </div>
   );
 }

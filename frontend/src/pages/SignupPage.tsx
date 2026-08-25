@@ -1,6 +1,10 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { AuthLayout } from "../components/AuthLayout";
+import { FormField } from "../components/FormField";
+import { Button } from "../components/Button";
+import { Alert } from "../components/Alert";
 
 export function SignupPage() {
   const { signUp } = useAuth();
@@ -27,34 +31,31 @@ export function SignupPage() {
   };
 
   return (
-    <form className="auth-form" onSubmit={handleSubmit}>
-      <h1>Create account</h1>
-
-      <label>
-        Username
-        <input
+    <AuthLayout title="Create your account" subtitle="Upload it, rate it, share it.">
+      <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
+        <FormField
+          label="Username"
+          name="username"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
           required
           minLength={3}
           autoComplete="username"
         />
-      </label>
 
-      <label>
-        Email
-        <input
+        <FormField
+          label="Email"
+          name="email"
           type="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           required
           autoComplete="email"
         />
-      </label>
 
-      <label>
-        Password
-        <input
+        <FormField
+          label="Password"
+          name="password"
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
@@ -62,17 +63,20 @@ export function SignupPage() {
           minLength={8}
           autoComplete="new-password"
         />
-      </label>
 
-      {error && <p className="error-message">{error}</p>}
+        {error && <Alert variant="error">{error}</Alert>}
 
-      <button type="submit" disabled={submitting}>
-        {submitting ? "Creating account..." : "Sign up"}
-      </button>
+        <Button type="submit" loading={submitting} className="mt-2 w-full">
+          {submitting ? "Creating account..." : "Sign up"}
+        </Button>
 
-      <p>
-        Already have an account? <Link to="/login">Log in</Link>
-      </p>
-    </form>
+        <p className="text-center text-sm text-neutral-500 dark:text-neutral-400">
+          Already have an account?{" "}
+          <Link to="/login" className="font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-400">
+            Log in
+          </Link>
+        </p>
+      </form>
+    </AuthLayout>
   );
 }

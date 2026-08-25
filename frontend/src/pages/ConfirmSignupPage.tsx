@@ -1,6 +1,10 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { AuthLayout } from "../components/AuthLayout";
+import { FormField } from "../components/FormField";
+import { Button } from "../components/Button";
+import { Alert } from "../components/Alert";
 
 export function ConfirmSignupPage() {
   const { confirmSignUp } = useAuth();
@@ -29,39 +33,38 @@ export function ConfirmSignupPage() {
   };
 
   return (
-    <form className="auth-form" onSubmit={handleSubmit}>
-      <h1>Confirm your email</h1>
-      <p>Enter the verification code we emailed you.</p>
-
-      <label>
-        Username
-        <input
+    <AuthLayout title="Confirm your email" subtitle="Enter the verification code we emailed you.">
+      <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
+        <FormField
+          label="Username"
+          name="username"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
           required
           autoComplete="username"
         />
-      </label>
 
-      <label>
-        Verification code
-        <input
+        <FormField
+          label="Verification code"
+          name="code"
           value={code}
           onChange={(e) => setCode(e.target.value)}
           required
           inputMode="numeric"
         />
-      </label>
 
-      {error && <p className="error-message">{error}</p>}
+        {error && <Alert variant="error">{error}</Alert>}
 
-      <button type="submit" disabled={submitting}>
-        {submitting ? "Confirming..." : "Confirm"}
-      </button>
+        <Button type="submit" loading={submitting} className="mt-2 w-full">
+          {submitting ? "Confirming..." : "Confirm"}
+        </Button>
 
-      <p>
-        <Link to="/login">Back to login</Link>
-      </p>
-    </form>
+        <p className="text-center text-sm text-neutral-500 dark:text-neutral-400">
+          <Link to="/login" className="font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-400">
+            Back to login
+          </Link>
+        </p>
+      </form>
+    </AuthLayout>
   );
 }

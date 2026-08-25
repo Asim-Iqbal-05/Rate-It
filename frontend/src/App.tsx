@@ -6,7 +6,6 @@ import { LoginPage } from "./pages/LoginPage";
 import { SignupPage } from "./pages/SignupPage";
 import { ConfirmSignupPage } from "./pages/ConfirmSignupPage";
 import { HomePage } from "./pages/HomePage";
-import "./App.css";
 
 function App() {
   return (

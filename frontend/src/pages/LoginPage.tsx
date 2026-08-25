@@ -1,6 +1,10 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { AuthLayout } from "../components/AuthLayout";
+import { FormField } from "../components/FormField";
+import { Button } from "../components/Button";
+import { Alert } from "../components/Alert";
 
 export function LoginPage() {
   const { signIn } = useAuth();
@@ -29,41 +33,42 @@ export function LoginPage() {
   };
 
   return (
-    <form className="auth-form" onSubmit={handleSubmit}>
-      <h1>Log in</h1>
+    <AuthLayout title="Welcome back">
+      <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
+        {justConfirmed && <Alert variant="info">Account confirmed - log in below.</Alert>}
 
-      {justConfirmed && <p className="info-message">Account confirmed - log in below.</p>}
-
-      <label>
-        Username or email
-        <input
+        <FormField
+          label="Username or email"
+          name="username"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
           required
           autoComplete="username"
         />
-      </label>
 
-      <label>
-        Password
-        <input
+        <FormField
+          label="Password"
+          name="password"
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           required
           autoComplete="current-password"
         />
-      </label>
 
-      {error && <p className="error-message">{error}</p>}
+        {error && <Alert variant="error">{error}</Alert>}
 
-      <button type="submit" disabled={submitting}>
-        {submitting ? "Logging in..." : "Log in"}
-      </button>
+        <Button type="submit" loading={submitting} className="mt-2 w-full">
+          {submitting ? "Logging in..." : "Log in"}
+        </Button>
 
-      <p>
-        Don't have an account? <Link to="/signup">Sign up</Link>
-      </p>
-    </form>
+        <p className="text-center text-sm text-neutral-500 dark:text-neutral-400">
+          Don&apos;t have an account?{" "}
+          <Link to="/signup" className="font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-400">
+            Sign up
+          </Link>
+        </p>
+      </form>
+    </AuthLayout>
   );
 }
