@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
 export function AppHeader() {
@@ -6,11 +7,20 @@ export function AppHeader() {
   return (
     <header className="border-b border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900">
       <div className="mx-auto flex max-w-2xl items-center justify-between px-4 py-3">
-        <span className="text-lg font-bold tracking-tight text-rose-700 dark:text-rose-400">
+        <Link
+          to="/"
+          className="text-lg font-bold tracking-tight text-rose-700 dark:text-rose-400"
+        >
           RateIt
-        </span>
+        </Link>
 
         <div className="flex items-center gap-3">
+          <Link
+            to="/new"
+            className="rounded-lg bg-rose-700 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-rose-800"
+          >
+            + New
+          </Link>
           <span className="text-sm text-stone-600 dark:text-stone-400">{username}</span>
           <button
             onClick={signOut}

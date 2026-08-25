@@ -6,6 +6,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { SignupPage } from "./pages/SignupPage";
 import { ConfirmSignupPage } from "./pages/ConfirmSignupPage";
 import { HomePage } from "./pages/HomePage";
+import { NewExperiencePage } from "./pages/NewExperiencePage";
 
 function App() {
   return (
@@ -17,6 +18,7 @@ function App() {
           <Route path="/confirm-signup" element={<ConfirmSignupPage />} />
           <Route element={<ProtectedRoute />}>
             <Route path="/" element={<HomePage />} />
+            <Route path="/new" element={<NewExperiencePage />} />
           </Route>
         </Routes>
       </BrowserRouter>

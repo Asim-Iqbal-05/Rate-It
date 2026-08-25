@@ -33,3 +33,88 @@ export async function apiFetch(
 
   return response;
 }
+
+export class ValidationApiError extends Error {
+  field: string;
+  constructor(field: string, message: string) {
+    super(message);
+    this.field = field;
+  }
+}
+
+export interface UploadUrlResponse {
+  url: string;
+  fields: Record<string, string>;
+  imageKey: string;
+}
+
+export async function getUploadUrl(
+  getIdToken: () => Promise<string | null>,
+): Promise<UploadUrlResponse> {
+  const res = await apiFetch("/api/media/upload-url", getIdToken, { method: "GET" });
+  if (!res.ok) {
+    throw new Error("Could not get an upload URL");
+  }
+  return res.json();
+}
+
+/**
+ * Direct browser-to-S3 upload (app PRD §3.2) - never goes through our
+ * own backend. Field order matters for S3's POST policy: the "file"
+ * part must come last, matching the order verified working during
+ * Phase 3's manual curl test.
+ */
+export async function uploadImageToS3(
+  { url, fields }: UploadUrlResponse,
+  file: File,
+): Promise<void> {
+  const formData = new FormData();
+  for (const [key, value] of Object.entries(fields)) {
+    formData.append(key, value);
+  }
+  formData.append("Content-Type", file.type);
+  formData.append("file", file);
+
+  const res = await fetch(url, { method: "POST", body: formData });
+  if (!res.ok) {
+    throw new Error("Image upload failed");
+  }
+}
+
+export interface CreateExperienceInput {
+  title: string;
+  description: string;
+  rating: number;
+  imageKey: string;
+}
+
+export interface CreateExperienceResponse {
+  experienceId: string;
+  createdAt: string;
+}
+
+export async function createExperience(
+  getIdToken: () => Promise<string | null>,
+  input: CreateExperienceInput,
+): Promise<CreateExperienceResponse> {
+  const res = await apiFetch("/api/experiences", getIdToken, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+
+  if (res.status === 400) {
+    const body = await res.json().catch(() => null);
+    throw new ValidationApiError(body?.error?.field ?? "form", body?.error?.message ?? "Invalid input");
+  }
+  if (res.status === 413) {
+    throw new Error("That image is too large.");
+  }
+  if (res.status === 429) {
+    throw new Error("Too many requests - slow down and try again.");
+  }
+  if (!res.ok) {
+    throw new Error("Could not create post");
+  }
+
+  return res.json();
+}
