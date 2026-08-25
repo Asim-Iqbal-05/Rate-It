@@ -10,7 +10,7 @@ export function ProtectedRoute() {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <svg
-          className="h-6 w-6 animate-spin text-indigo-600 dark:text-indigo-400"
+          className="h-6 w-6 animate-spin text-rose-700 dark:text-rose-400"
           viewBox="0 0 24 24"
           fill="none"
           aria-label="Loading"

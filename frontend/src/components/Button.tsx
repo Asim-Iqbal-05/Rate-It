@@ -8,9 +8,9 @@ export function Button({ loading, disabled, children, className = "", ...props }
   return (
     <button
       disabled={disabled || loading}
-      className={`inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5
-        font-medium text-white transition-colors hover:bg-indigo-700
-        focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600
+      className={`inline-flex items-center justify-center gap-2 rounded-lg bg-rose-700 px-4 py-2.5
+        font-medium text-white transition-colors hover:bg-rose-800
+        focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-700
         disabled:cursor-not-allowed disabled:opacity-60 ${className}`}
       {...props}
     >

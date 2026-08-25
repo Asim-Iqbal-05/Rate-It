@@ -5,10 +5,10 @@ import { AppHeader } from "../components/AppHeader";
 // this, your token was accepted and the protected route held.
 export function HomePage() {
   return (
-    <div className="min-h-screen bg-neutral-50 dark:bg-neutral-950">
+    <div className="min-h-screen bg-stone-50 dark:bg-stone-950">
       <AppHeader />
       <main className="mx-auto max-w-2xl px-4 py-16 text-center">
-        <p className="text-neutral-500 dark:text-neutral-400">
+        <p className="text-stone-500 dark:text-stone-400">
           The feed screen isn&apos;t built yet - this page just confirms the auth shell works.
         </p>
       </main>

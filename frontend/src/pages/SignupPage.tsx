@@ -5,6 +5,7 @@ import { AuthLayout } from "../components/AuthLayout";
 import { FormField } from "../components/FormField";
 import { Button } from "../components/Button";
 import { Alert } from "../components/Alert";
+import { PasswordRequirements } from "../components/PasswordRequirements";
 
 export function SignupPage() {
   const { signUp } = useAuth();
@@ -13,6 +14,7 @@ export function SignupPage() {
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [passwordTouched, setPasswordTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -53,16 +55,24 @@ export function SignupPage() {
           autoComplete="email"
         />
 
-        <FormField
-          label="Password"
-          name="password"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-          minLength={8}
-          autoComplete="new-password"
-        />
+        <div className="flex flex-col gap-2">
+          <FormField
+            label="Password"
+            name="password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onFocus={() => setPasswordTouched(true)}
+            required
+            minLength={8}
+            autoComplete="new-password"
+          />
+          {/* Shown as soon as the user starts typing, not after a
+              rejected submit - this is what was annoying before. */}
+          {(passwordTouched || password.length > 0) && (
+            <PasswordRequirements password={password} />
+          )}
+        </div>
 
         {error && <Alert variant="error">{error}</Alert>}
 
@@ -70,9 +80,9 @@ export function SignupPage() {
           {submitting ? "Creating account..." : "Sign up"}
         </Button>
 
-        <p className="text-center text-sm text-neutral-500 dark:text-neutral-400">
+        <p className="text-center text-sm text-stone-500 dark:text-stone-400">
           Already have an account?{" "}
-          <Link to="/login" className="font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-400">
+          <Link to="/login" className="font-medium text-rose-700 hover:text-rose-800 dark:text-rose-400">
             Log in
           </Link>
         </p>

@@ -62,9 +62,9 @@ export function LoginPage() {
           {submitting ? "Logging in..." : "Log in"}
         </Button>
 
-        <p className="text-center text-sm text-neutral-500 dark:text-neutral-400">
+        <p className="text-center text-sm text-stone-500 dark:text-stone-400">
           Don&apos;t have an account?{" "}
-          <Link to="/signup" className="font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-400">
+          <Link to="/signup" className="font-medium text-rose-700 hover:text-rose-800 dark:text-rose-400">
             Sign up
           </Link>
         </p>

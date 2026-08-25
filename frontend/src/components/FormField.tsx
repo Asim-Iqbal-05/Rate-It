@@ -9,15 +9,15 @@ export function FormField({ label, id, className = "", ...props }: FormFieldProp
 
   return (
     <div className="flex flex-col gap-1.5">
-      <label htmlFor={inputId} className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
+      <label htmlFor={inputId} className="text-sm font-medium text-stone-700 dark:text-stone-300">
         {label}
       </label>
       <input
         id={inputId}
-        className={`rounded-lg border border-neutral-300 bg-white px-3 py-2 text-neutral-900
-          placeholder:text-neutral-400 transition-colors
-          focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30
-          dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 ${className}`}
+        className={`rounded-lg border border-stone-300 bg-white px-3 py-2 text-stone-900
+          placeholder:text-stone-400 transition-colors
+          focus:border-rose-600 focus:outline-none focus:ring-2 focus:ring-rose-600/30
+          dark:border-stone-700 dark:bg-stone-900 dark:text-stone-100 ${className}`}
         {...props}
       />
     </div>
