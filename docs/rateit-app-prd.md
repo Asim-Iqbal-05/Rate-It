@@ -19,7 +19,7 @@ This document covers **what the app does and how the frontend talks to the backe
 | Feature | Description |
 |---|---|
 | **Authentication** | Users must create an account and log in (Cognito-backed). The entire app, including viewing the feed, requires an authenticated session. |
-| **Image Upload** | Users upload a single image directly from their device. Shown at full quality — no compression or resizing. |
+| **Image Upload** | Users upload 1–5 images directly from their device. Shown at full quality — no compression or resizing. |
 | **Submit Experience** | Users write a text description, give a title, and provide a 1–5 star rating alongside their uploaded image. |
 | **Global Feed** | Users view a chronological feed of all experiences posted by everyone on the platform. |
 
@@ -79,13 +79,15 @@ Issues a short-lived, scoped S3 presigned POST policy.
 ### 4.2 `POST /api/experiences`
 Persists the post.
 
+> **Deviation from original v1 scope:** the app originally spec'd a single image per post (§2). Multi-image support (1–5 photos) was added post-launch at the user's request — `imageKey` (singular) became `imageKeys` (array). Noted here so this doc stays the source of truth rather than going stale.
+
 **Request:**
 ```json
 {
   "title": "Confusing street sign on 5th",
   "description": "Genuinely unclear if this means no parking or no walking.",
   "rating": 4,
-  "imageKey": "{userId}/{uuid}.jpg"
+  "imageKeys": ["{userId}/{uuid1}.jpg", "{userId}/{uuid2}.jpg"]
 }
 ```
 
@@ -101,7 +103,7 @@ Persists the post.
 - `title`: required, keep short (recommend enforcing a max length in the form itself).
 - `description`: required, cap length client-side to match server-side cap.
 - `rating`: integer 1–5, enforced by the star UI so an invalid value can't be sent.
-- `imageKey`: must come from a completed §4.1 flow — don't allow submit without a successful S3 upload.
+- `imageKeys`: 1–5 entries, each from a completed §4.1 flow — don't allow submit until every selected image has finished uploading successfully.
 
 **Error responses to handle in the UI:**
 - `400` — validation failure (show field-level errors).
@@ -122,7 +124,7 @@ Returns the chronological global feed.
       "title": "...",
       "description": "...",
       "rating": 4,
-      "imageUrl": "https://.../image.jpg",
+      "imageUrls": ["https://.../image1.jpg", "https://.../image2.jpg"],
       "createdAt": "2026-08-21T10:15:00Z"
     }
   ],
@@ -132,6 +134,7 @@ Returns the chronological global feed.
 - Newest first.
 - If `nextPageToken` is present, a "load more" action can re-call with it; if the backend doesn't yet support pagination params, treat the first page as the whole feed for v1 and add this later — don't build UI for a capability the backend doesn't expose yet.
 - This endpoint may be served from a CloudFront cache with a short TTL (10–30s) — the frontend doesn't need to know or care, but don't assume every call reflects the literal instant of the request.
+- **`imageUrls` is an array (1–5 entries)** — the feed card needs a way to browse multiple photos per post (e.g. a small carousel or dot-indicator gallery), not just render the first one. Not yet built as of this note; flagged here so Step 2 doesn't get built against stale single-image assumptions.
 
 ---
 
@@ -146,7 +149,7 @@ Mirrors the backend `Experiences` table — the frontend should treat these as r
 | `title` | string | Client-provided. |
 | `description` | string | Client-provided. |
 | `rating` | number | Client-provided, 1–5. |
-| `imageUrl` | string | Server-resolved; frontend just renders it as an `<img>` src. |
+| `imageUrls` | string[] | Server-resolved, 1–5 entries; frontend renders each as an `<img>` src. |
 | `createdAt` | string (ISO) | Server-generated, drives sort order. |
 
 ---

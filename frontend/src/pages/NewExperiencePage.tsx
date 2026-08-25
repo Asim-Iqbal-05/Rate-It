@@ -17,20 +17,27 @@ import { StarRatingInput } from "../components/StarRatingInput";
 const MAX_TITLE_LENGTH = 100;
 const MAX_DESCRIPTION_LENGTH = 1000;
 const LARGE_FILE_WARNING_BYTES = 8 * 1024 * 1024;
+// Mirrors MAX_IMAGES in services/experience/handler.py - keep in sync.
+const MAX_IMAGES = 5;
 
-type UploadStatus = "idle" | "uploading" | "uploaded" | "error";
+type UploadStatus = "uploading" | "uploaded" | "error";
+
+interface ImageItem {
+  id: string;
+  file: File;
+  previewUrl: string;
+  status: UploadStatus;
+  imageKey: string | null;
+  error: string | null;
+  large: boolean;
+}
 
 export function NewExperiencePage() {
   const { getIdToken } = useAuth();
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [file, setFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [uploadStatus, setUploadStatus] = useState<UploadStatus>("idle");
-  const [imageKey, setImageKey] = useState<string | null>(null);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [largeFileWarning, setLargeFileWarning] = useState(false);
+  const [images, setImages] = useState<ImageItem[]>([]);
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -38,52 +45,73 @@ export function NewExperiencePage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const updateImage = (id: string, patch: Partial<ImageItem>) => {
+    setImages((prev) => prev.map((img) => (img.id === id ? { ...img, ...patch } : img)));
+  };
+
   // Upload and submit fail independently and need different next
-  // actions from the user - app PRD §6. Keeping them as separate
-  // status/error pairs (uploadStatus/uploadError vs submitError) is
-  // what keeps that distinction visible in the UI below.
-  const runUpload = async (toUpload: File) => {
-    setUploadStatus("uploading");
-    setUploadError(null);
+  // actions from the user - app PRD §6. Each image tracks its own
+  // upload state so one failure never blocks or hides the others.
+  const runUpload = async (item: ImageItem) => {
+    updateImage(item.id, { status: "uploading", error: null });
     try {
       const uploadUrl = await getUploadUrl(getIdToken);
-      await uploadImageToS3(uploadUrl, toUpload);
-      setImageKey(uploadUrl.imageKey);
-      setUploadStatus("uploaded");
+      await uploadImageToS3(uploadUrl, item.file);
+      updateImage(item.id, { status: "uploaded", imageKey: uploadUrl.imageKey });
     } catch (err) {
-      setUploadStatus("error");
-      setImageKey(null);
-      setUploadError(
-        err instanceof UnauthorizedError
-          ? "Your session expired - log in again to upload."
-          : err instanceof Error
-            ? err.message
-            : "Upload failed",
-      );
+      updateImage(item.id, {
+        status: "error",
+        imageKey: null,
+        error:
+          err instanceof UnauthorizedError
+            ? "Your session expired - log in again to upload."
+            : err instanceof Error
+              ? err.message
+              : "Upload failed",
+      });
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const picked = e.target.files?.[0];
-    if (!picked) return;
+  const handleFilesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = Array.from(e.target.files ?? []);
+    e.target.value = ""; // allow re-picking the same file later
 
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    const room = MAX_IMAGES - images.length;
+    const toAdd = picked.slice(0, room);
 
-    setFile(picked);
-    setPreviewUrl(URL.createObjectURL(picked));
-    setImageKey(null);
-    setLargeFileWarning(picked.size > LARGE_FILE_WARNING_BYTES);
-    runUpload(picked);
+    const newItems: ImageItem[] = toAdd.map((file) => ({
+      id: crypto.randomUUID(),
+      file,
+      previewUrl: URL.createObjectURL(file),
+      status: "uploading",
+      imageKey: null,
+      error: null,
+      large: file.size > LARGE_FILE_WARNING_BYTES,
+    }));
+
+    setImages((prev) => [...prev, ...newItems]);
+    newItems.forEach(runUpload);
+  };
+
+  const removeImage = (id: string) => {
+    setImages((prev) => {
+      const target = prev.find((img) => img.id === id);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((img) => img.id !== id);
+    });
   };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!imageKey) return;
+    const imageKeys = images
+      .filter((img) => img.status === "uploaded" && img.imageKey)
+      .map((img) => img.imageKey as string);
+    if (imageKeys.length === 0) return;
 
     setSubmitting(true);
     setSubmitError(null);
     try {
-      await createExperience(getIdToken, { title, description, rating, imageKey });
+      await createExperience(getIdToken, { title, description, rating, imageKeys });
       navigate("/");
     } catch (err) {
       if (err instanceof UnauthorizedError) {
@@ -102,7 +130,8 @@ export function NewExperiencePage() {
   };
 
   const canSubmit =
-    uploadStatus === "uploaded" &&
+    images.length > 0 &&
+    images.every((img) => img.status === "uploaded") &&
     title.trim().length > 0 &&
     description.trim().length > 0 &&
     rating >= 1 &&
@@ -122,91 +151,98 @@ export function NewExperiencePage() {
               ref={fileInputRef}
               type="file"
               accept="image/*"
-              onChange={handleFileChange}
+              multiple
+              onChange={handleFilesChange}
               className="hidden"
             />
 
-            {!previewUrl ? (
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="flex h-48 w-full flex-col items-center justify-center gap-2 rounded-xl
-                  border-2 border-dashed border-stone-300 text-stone-500 transition-colors
-                  hover:border-rose-400 hover:text-rose-700
-                  dark:border-stone-700 dark:text-stone-400 dark:hover:border-rose-700 dark:hover:text-rose-400"
-              >
-                <svg viewBox="0 0 24 24" fill="none" className="h-8 w-8" aria-hidden="true">
-                  <path
-                    d="M12 16V4m0 0L7 9m5-5l5 5M5 20h14"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
+            <div className="grid grid-cols-3 gap-2">
+              {images.map((img) => (
+                <div key={img.id} className="relative">
+                  <img
+                    src={img.previewUrl}
+                    alt=""
+                    className="aspect-square w-full rounded-lg border border-stone-200 object-cover dark:border-stone-800"
                   />
-                </svg>
-                Choose a photo
-              </button>
-            ) : (
-              <div className="relative">
-                <img
-                  src={previewUrl}
-                  alt="Selected"
-                  className="h-64 w-full rounded-xl border border-stone-200 object-cover dark:border-stone-800"
-                />
 
-                {uploadStatus === "uploading" && (
-                  <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/40">
-                    <svg className="h-8 w-8 animate-spin text-white" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path
-                        className="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
-                      />
+                  {img.status === "uploading" && (
+                    <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/40">
+                      <svg className="h-5 w-5 animate-spin text-white" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path
+                          className="opacity-75"
+                          fill="currentColor"
+                          d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                        />
+                      </svg>
+                    </div>
+                  )}
+
+                  {img.status === "uploaded" && (
+                    <span className="absolute right-1 top-1 rounded-full bg-emerald-600 p-0.5 text-white">
+                      <svg viewBox="0 0 20 20" fill="currentColor" className="h-3 w-3" aria-hidden="true">
+                        <path
+                          fillRule="evenodd"
+                          d="M16.704 5.29a1 1 0 010 1.415l-7.5 7.5a1 1 0 01-1.414 0l-3.5-3.5a1 1 0 111.414-1.414l2.793 2.792 6.793-6.793a1 1 0 011.414 0z"
+                          clipRule="evenodd"
+                        />
+                      </svg>
+                    </span>
+                  )}
+
+                  {img.status === "error" && (
+                    <button
+                      type="button"
+                      onClick={() => runUpload(img)}
+                      className="absolute inset-0 flex items-center justify-center rounded-lg bg-red-950/60 text-xs font-medium text-white"
+                    >
+                      Retry
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => removeImage(img.id)}
+                    aria-label="Remove image"
+                    className="absolute -right-1.5 -top-1.5 rounded-full bg-stone-900 p-0.5 text-white shadow-sm dark:bg-stone-100 dark:text-stone-900"
+                  >
+                    <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5" aria-hidden="true">
+                      <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
                     </svg>
-                  </div>
-                )}
+                  </button>
+                </div>
+              ))}
 
-                {uploadStatus === "uploaded" && (
-                  <span className="absolute right-2 top-2 rounded-full bg-emerald-600 p-1 text-white">
-                    <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" aria-hidden="true">
-                      <path
-                        fillRule="evenodd"
-                        d="M16.704 5.29a1 1 0 010 1.415l-7.5 7.5a1 1 0 01-1.414 0l-3.5-3.5a1 1 0 111.414-1.414l2.793 2.792 6.793-6.793a1 1 0 011.414 0z"
-                        clipRule="evenodd"
-                      />
-                    </svg>
-                  </span>
-                )}
-
+              {images.length < MAX_IMAGES && (
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="absolute bottom-2 right-2 rounded-lg bg-white/90 px-3 py-1 text-xs font-medium
-                    text-stone-700 shadow-sm hover:bg-white dark:bg-stone-900/90 dark:text-stone-200"
+                  className="flex aspect-square flex-col items-center justify-center gap-1 rounded-lg
+                    border-2 border-dashed border-stone-300 text-stone-500 transition-colors
+                    hover:border-rose-400 hover:text-rose-700
+                    dark:border-stone-700 dark:text-stone-400 dark:hover:border-rose-700 dark:hover:text-rose-400"
                 >
-                  Change
+                  <svg viewBox="0 0 24 24" fill="none" className="h-6 w-6" aria-hidden="true">
+                    <path
+                      d="M12 16V4m0 0L7 9m5-5l5 5M5 20h14"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  <span className="text-xs">Add photo</span>
                 </button>
-              </div>
-            )}
+              )}
+            </div>
 
-            {largeFileWarning && uploadStatus !== "error" && (
-              <p className="mt-2 text-xs text-stone-500 dark:text-stone-400">
-                That&apos;s a large file - upload may take a moment.
-              </p>
-            )}
+            <p className="mt-2 text-xs text-stone-500 dark:text-stone-400">
+              {images.length}/{MAX_IMAGES} photos
+              {images.some((img) => img.large) && " - large files may take a moment to upload"}
+            </p>
 
-            {uploadStatus === "error" && (
-              <div className="mt-2 flex items-center justify-between gap-2">
-                <Alert variant="error">{uploadError ?? "Upload failed"}</Alert>
-                <button
-                  type="button"
-                  onClick={() => file && runUpload(file)}
-                  className="shrink-0 text-sm font-medium text-rose-700 hover:text-rose-800 dark:text-rose-400"
-                >
-                  Retry
-                </button>
-              </div>
+            {images.some((img) => img.status === "error") && (
+              <Alert variant="error">One or more photos failed to upload - tap to retry.</Alert>
             )}
           </div>
 

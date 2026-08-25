@@ -85,7 +85,7 @@ export interface CreateExperienceInput {
   title: string;
   description: string;
   rating: number;
-  imageKey: string;
+  imageKeys: string[];
 }
 
 export interface CreateExperienceResponse {
