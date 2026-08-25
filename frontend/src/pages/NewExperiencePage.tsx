@@ -238,6 +238,7 @@ export function NewExperiencePage() {
 
             <p className="mt-2 text-xs text-stone-500 dark:text-stone-400">
               {images.length}/{MAX_IMAGES} photos
+              {images.length === 0 && " - hold Ctrl (Cmd on Mac) to pick several at once"}
               {images.some((img) => img.large) && " - large files may take a moment to upload"}
             </p>
 
