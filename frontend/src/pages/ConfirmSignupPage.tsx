@@ -12,6 +12,13 @@ export function ConfirmSignupPage() {
   const location = useLocation();
 
   const initialUsername = (location.state as { username?: string } | null)?.username ?? "";
+  // Locked when we already know the username (came straight from
+  // signup) - editing it here can't confirm someone else's account
+  // (Cognito still requires their code too), but it's a pointless way
+  // for a legitimate user to typo themselves into a confusing error.
+  // Only left editable as a fallback when we genuinely don't know it
+  // (e.g. landing on this page directly without that context).
+  const usernameLocked = initialUsername.length > 0;
 
   const [username, setUsername] = useState(initialUsername);
   const [code, setCode] = useState("");
@@ -35,14 +42,26 @@ export function ConfirmSignupPage() {
   return (
     <AuthLayout title="Confirm your email" subtitle="Enter the verification code we emailed you.">
       <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
-        <FormField
-          label="Username"
-          name="username"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          required
-          autoComplete="username"
-        />
+        <div className="flex flex-col gap-1.5">
+          <FormField
+            label="Username"
+            name="username"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            required
+            autoComplete="username"
+            readOnly={usernameLocked}
+            className={usernameLocked ? "cursor-not-allowed bg-stone-100 dark:bg-stone-800" : ""}
+          />
+          {usernameLocked && (
+            <p className="text-xs text-stone-500 dark:text-stone-400">
+              Wrong account?{" "}
+              <Link to="/signup" className="font-medium text-rose-700 hover:text-rose-800 dark:text-rose-400">
+                Sign up again
+              </Link>
+            </p>
+          )}
+        </div>
 
         <FormField
           label="Verification code"
