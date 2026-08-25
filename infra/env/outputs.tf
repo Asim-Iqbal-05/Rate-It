@@ -33,3 +33,11 @@ output "experience_service_function_name" {
 output "api_endpoint" {
   value = module.api_gateway.api_endpoint
 }
+
+output "feed_service_ecr_repository_url" {
+  value = module.ecr.repository_url
+}
+
+output "feed_service_alb_dns_name" {
+  value = module.ecs_feed_service.alb_dns_name
+}

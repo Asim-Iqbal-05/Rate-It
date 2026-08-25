@@ -18,3 +18,9 @@ variable "upload_cors_origins" {
     "https://rateit.internship.cloudelligent-sandbox.com",
   ]
 }
+
+variable "feed_service_image_tag" {
+  description = "Image tag in the Feed Service ECR repo to deploy. Build and push it before applying, or the ECS service will fail to pull on first launch."
+  type        = string
+  default     = "latest"
+}
