@@ -5,7 +5,7 @@ import { ProtectedRoute } from "./components/ProtectedRoute";
 import { LoginPage } from "./pages/LoginPage";
 import { SignupPage } from "./pages/SignupPage";
 import { ConfirmSignupPage } from "./pages/ConfirmSignupPage";
-import { HomePage } from "./pages/HomePage";
+import { FeedPage } from "./pages/FeedPage";
 import { NewExperiencePage } from "./pages/NewExperiencePage";
 
 function App() {
@@ -17,7 +17,7 @@ function App() {
           <Route path="/signup" element={<SignupPage />} />
           <Route path="/confirm-signup" element={<ConfirmSignupPage />} />
           <Route element={<ProtectedRoute />}>
-            <Route path="/" element={<HomePage />} />
+            <Route path="/" element={<FeedPage />} />
             <Route path="/new" element={<NewExperiencePage />} />
           </Route>
         </Routes>

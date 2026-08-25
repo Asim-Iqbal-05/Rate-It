@@ -81,6 +81,33 @@ export async function uploadImageToS3(
   }
 }
 
+export interface FeedItem {
+  experienceId: string;
+  userId: string;
+  title: string;
+  description: string;
+  rating: number;
+  imageUrls: string[];
+  createdAt: string;
+}
+
+export interface FeedResponse {
+  items: FeedItem[];
+  nextPageToken: string | null;
+}
+
+export async function getFeed(
+  getIdToken: () => Promise<string | null>,
+  pageToken?: string,
+): Promise<FeedResponse> {
+  const query = pageToken ? `?pageToken=${encodeURIComponent(pageToken)}` : "";
+  const res = await apiFetch(`/api/feed${query}`, getIdToken, { method: "GET" });
+  if (!res.ok) {
+    throw new Error("Could not load the feed");
+  }
+  return res.json();
+}
+
 export interface CreateExperienceInput {
   title: string;
   description: string;

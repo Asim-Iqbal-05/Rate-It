@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-const STAR_PATH =
+export const STAR_PATH =
   "M10 1.5l2.6 5.27 5.82.85-4.21 4.1 1 5.8L10 14.9l-5.21 2.74 1-5.8-4.21-4.1 5.82-.85L10 1.5z";
 
 export function StarRatingInput({
