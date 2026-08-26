@@ -132,8 +132,7 @@ module "ecs_feed_service" {
   table_arn       = module.dynamodb.table_arn
   feed_index_name = module.dynamodb.feed_index_name
 
-  uploads_bucket_name = module.s3_uploads.bucket_name
-  uploads_bucket_arn  = module.s3_uploads.bucket_arn
+  public_image_base_url = "https://${var.custom_domain_name}"
 
   ecr_repository_url  = module.ecr.repository_url
   container_image_tag = var.feed_service_image_tag
@@ -180,4 +179,27 @@ resource "aws_apigatewayv2_route" "feed" {
   target             = "integrations/${aws_apigatewayv2_integration.feed.id}"
   authorization_type = "JWT"
   authorizer_id      = module.api_gateway.authorizer_id
+}
+
+# --- Phase 6: Edge delivery ------------------------------------------------
+
+module "cloudfront" {
+  source = "../modules/cloudfront"
+  providers = {
+    aws.us_east_1 = aws.us_east_1
+  }
+
+  project_name     = var.project_name
+  domain_name      = var.custom_domain_name
+  parent_zone_name = var.parent_dns_zone_name
+
+  frontend_bucket_name                 = module.s3_frontend.bucket_name
+  frontend_bucket_arn                  = module.s3_frontend.bucket_arn
+  frontend_bucket_regional_domain_name = module.s3_frontend.bucket_regional_domain_name
+
+  uploads_bucket_name                 = module.s3_uploads.bucket_name
+  uploads_bucket_arn                  = module.s3_uploads.bucket_arn
+  uploads_bucket_regional_domain_name = module.s3_uploads.bucket_regional_domain_name
+
+  api_gateway_domain = trimprefix(module.api_gateway.api_endpoint, "https://")
 }

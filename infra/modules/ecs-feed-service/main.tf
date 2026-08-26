@@ -42,11 +42,9 @@ data "aws_iam_policy_document" "task_permissions" {
     resources = [var.table_arn, "${var.table_arn}/index/${var.feed_index_name}"]
   }
 
-  statement {
-    sid       = "ResolveImageUrls"
-    actions   = ["s3:GetObject"]
-    resources = ["${var.uploads_bucket_arn}/*"]
-  }
+  # No S3 permissions: since Phase 6, image URLs are constructed as
+  # plain CloudFront links (PUBLIC_IMAGE_BASE_URL), not presigned -
+  # the task itself never calls S3 directly anymore.
 }
 
 resource "aws_iam_role_policy" "task" {
@@ -180,7 +178,7 @@ resource "aws_ecs_task_definition" "this" {
       environment = [
         { name = "TABLE_NAME", value = var.table_name },
         { name = "FEED_INDEX_NAME", value = var.feed_index_name },
-        { name = "UPLOADS_BUCKET", value = var.uploads_bucket_name },
+        { name = "PUBLIC_IMAGE_BASE_URL", value = var.public_image_base_url },
       ]
       logConfiguration = {
         logDriver = "awslogs"

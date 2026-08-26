@@ -30,12 +30,9 @@ variable "feed_index_name" {
   type = string
 }
 
-variable "uploads_bucket_name" {
-  type = string
-}
-
-variable "uploads_bucket_arn" {
-  type = string
+variable "public_image_base_url" {
+  description = "Public base URL images are served from (CloudFront custom domain) - the task constructs /images/{key} links from this, no S3 access needed."
+  type        = string
 }
 
 variable "ecr_repository_url" {

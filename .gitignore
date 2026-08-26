@@ -28,6 +28,9 @@ frontend/.vite/
 .env
 .env.*
 !.env.example
+# Not secret (Cognito IDs are public-safe, API URL is just a domain) -
+# needed for prod builds to work for anyone building this repo.
+!frontend/.env.production
 
 # OS / editor
 .DS_Store

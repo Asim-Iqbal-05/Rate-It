@@ -24,3 +24,15 @@ variable "feed_service_image_tag" {
   type        = string
   default     = "latest"
 }
+
+variable "custom_domain_name" {
+  description = "The app's real domain, a subdomain of the shared internship zone."
+  type        = string
+  default     = "rateit.internship.cloudelligent-sandbox.com"
+}
+
+variable "parent_dns_zone_name" {
+  description = "The existing, shared Route 53 hosted zone - looked up, never created."
+  type        = string
+  default     = "internship.cloudelligent-sandbox.com"
+}

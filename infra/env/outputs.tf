@@ -41,3 +41,15 @@ output "feed_service_ecr_repository_url" {
 output "feed_service_alb_dns_name" {
   value = module.ecs_feed_service.alb_dns_name
 }
+
+output "app_url" {
+  value = module.cloudfront.app_url
+}
+
+output "cloudfront_distribution_id" {
+  value = module.cloudfront.distribution_id
+}
+
+output "cloudfront_distribution_domain_name" {
+  value = module.cloudfront.distribution_domain_name
+}
