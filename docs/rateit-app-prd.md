@@ -30,7 +30,7 @@ This document covers **what the app does and how the frontend talks to the backe
 ### 3.1 Sign up / Log in
 1. User lands on the app → redirected to login if no valid session.
 2. Cognito-hosted or custom UI collects credentials.
-3. On success, app receives a JWT (ID token / access token) and stores it in memory (not localStorage — see §6 security note).
+3. On success, app receives a JWT (ID token / access token) and stores it in `sessionStorage` (not `localStorage` — see §6 security note). Revised from pure in-memory storage: memory-only meant a page refresh always logged the user out, which was rejected as bad UX in practice — `sessionStorage` survives a refresh while still clearing on tab/browser close.
 4. Every subsequent API call sends `Authorization: Bearer <token>`.
 5. Token refresh handled silently before expiry; on refresh failure, bounce to login.
 
@@ -157,7 +157,7 @@ Mirrors the backend `Experiences` table — the frontend should treat these as r
 ## 6. Non-Functional Requirements
 
 - **Image quality:** uploads are shown exactly as uploaded — no client-side compression or resizing before upload (this is a deliberate product decision, not an oversight; see infra PRD §7.2). Do warn users if a file is very large before upload, since there's no server-side resize to fall back on.
-- **Token storage:** keep JWTs in memory (or a secure httpOnly cookie if the auth flow supports it) — not `localStorage`, to reduce XSS token-theft exposure given there's no server-side session to revoke against.
+- **Token storage:** keep JWTs in `sessionStorage` (revised from pure in-memory — see §3.1) — not `localStorage`, to reduce XSS token-theft exposure given there's no server-side session to revoke against. `sessionStorage` is the accepted middle ground: it clears on tab/browser close like memory would, but unlike pure in-memory it survives a page refresh.
 - **Optimistic UI:** acceptable for feed prepend after a successful post, but always reconcile with the next real `GET /api/feed` call rather than trusting client state indefinitely.
 - **Offline/slow network:** the upload step (§3.2) is the most failure-prone part of the flow — design the UI so a failed upload is clearly distinguishable from a failed submit, since they fail independently and the user needs different next actions for each.
 

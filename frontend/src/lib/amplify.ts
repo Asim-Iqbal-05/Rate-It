@@ -2,27 +2,27 @@ import { Amplify } from "aws-amplify";
 import { cognitoUserPoolsTokenProvider } from "aws-amplify/auth/cognito";
 import type { KeyValueStorageInterface } from "aws-amplify/utils";
 
-// App PRD §6: JWTs live in memory, never localStorage, to reduce
-// XSS token-theft exposure (there's no server-side session to revoke
-// against). Trade-off: a page reload loses the session and requires
-// re-login - that's the deliberate cost of this security choice.
-class InMemoryStorage implements KeyValueStorageInterface {
-  private store = new Map<string, string>();
-
+// App PRD §6 calls for keeping JWTs out of localStorage to reduce XSS
+// token-theft exposure (there's no server-side session to revoke
+// against). sessionStorage is the middle ground actually used here:
+// it still clears on tab/browser close (unlike localStorage, which
+// persists indefinitely), but - unlike a pure in-memory store - it
+// survives a page refresh, which pure in-memory storage did not.
+class SessionStorageAdapter implements KeyValueStorageInterface {
   async getItem(key: string) {
-    return this.store.get(key) ?? null;
+    return sessionStorage.getItem(key);
   }
 
   async setItem(key: string, value: string) {
-    this.store.set(key, value);
+    sessionStorage.setItem(key, value);
   }
 
   async removeItem(key: string) {
-    this.store.delete(key);
+    sessionStorage.removeItem(key);
   }
 
   async clear() {
-    this.store.clear();
+    sessionStorage.clear();
   }
 }
 
@@ -35,4 +35,4 @@ Amplify.configure({
   },
 });
 
-cognitoUserPoolsTokenProvider.setKeyValueStorage(new InMemoryStorage());
+cognitoUserPoolsTokenProvider.setKeyValueStorage(new SessionStorageAdapter());
