@@ -13,3 +13,7 @@ output "execution_arn" {
 output "authorizer_id" {
   value = aws_apigatewayv2_authorizer.cognito.id
 }
+
+output "stage_arn" {
+  value = aws_apigatewayv2_stage.default.arn
+}

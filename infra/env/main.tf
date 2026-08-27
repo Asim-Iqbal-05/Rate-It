@@ -203,3 +203,12 @@ module "cloudfront" {
 
   api_gateway_domain = trimprefix(module.api_gateway.api_endpoint, "https://")
 }
+
+# --- Phase 7: Abuse hardening ----------------------------------------------
+
+module "waf" {
+  source = "../modules/waf"
+
+  project_name          = var.project_name
+  api_gateway_stage_arn = module.api_gateway.stage_arn
+}
