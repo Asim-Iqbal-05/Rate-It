@@ -109,12 +109,10 @@ resource "aws_lb" "this" {
   security_groups    = [aws_security_group.alb.id]
 }
 
-# Two target groups exist now even though only "blue" is wired to the
-# service today (standard rolling deploys) - infra PRD §8.1 notes this
-# is structurally required for blue/green, not incidental cost. Native
-# ECS blue/green wiring (deployment_configuration.strategy) isn't in
-# the installed provider's schema (v5.100) - deferred to Phase 8
-# (CI/CD automation), which already owns that scope per the PRD.
+# Two target groups, both wired into the service's native blue/green
+# deployment config below (Phase 8) - "blue" is the primary/current
+# target group, "green" is where ECS stands up the new task set during
+# a deploy before flipping the production listener rule over to it.
 resource "aws_lb_target_group" "blue" {
   name        = "${var.project_name}-feed-blue"
   port        = var.container_port
@@ -156,6 +154,59 @@ resource "aws_lb_listener" "http" {
     type             = "forward"
     target_group_arn = aws_lb_target_group.blue.arn
   }
+}
+
+# ECS's blue/green deployment_configuration needs a *listener rule* ARN
+# to flip (production_listener_rule) - the listener's own default_action
+# above isn't itself an addressable rule. This catch-all rule takes
+# priority over the default_action, so it's what actually serves all
+# traffic; the default_action becomes an unreachable fallback.
+resource "aws_lb_listener_rule" "production" {
+  listener_arn = aws_lb_listener.http.arn
+  priority     = 1
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.blue.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/*"]
+    }
+  }
+
+  # ECS overwrites this rule's target group on every blue/green deploy -
+  # Terraform's last-applied value would otherwise fight the live state
+  # on the next plan.
+  lifecycle {
+    ignore_changes = [action]
+  }
+}
+
+# Dedicated infrastructure role so ECS can flip the listener rule above
+# between the blue/green target groups on each deploy. Deliberately not
+# the ECS service-linked role (AWSServiceRoleForECS) - AWS's own guidance
+# is that it isn't authorized for elasticloadbalancing:ModifyRule, so
+# blue/green needs this separate role with the dedicated managed policy.
+data "aws_iam_policy_document" "ecs_infrastructure_assume" {
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["ecs.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "ecs_infrastructure" {
+  name               = "${var.project_name}-feed-service-ecs-infra-role"
+  assume_role_policy = data.aws_iam_policy_document.ecs_infrastructure_assume.json
+}
+
+resource "aws_iam_role_policy_attachment" "ecs_infrastructure" {
+  role       = aws_iam_role.ecs_infrastructure.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonECSInfrastructureRolePolicyForLoadBalancers"
 }
 
 resource "aws_ecs_task_definition" "this" {
@@ -209,16 +260,34 @@ resource "aws_ecs_service" "this" {
     target_group_arn = aws_lb_target_group.blue.arn
     container_name   = "feed-service"
     container_port   = var.container_port
+
+    advanced_configuration {
+      alternate_target_group_arn = aws_lb_target_group.green.arn
+      production_listener_rule   = aws_lb_listener_rule.production.arn
+      role_arn                   = aws_iam_role.ecs_infrastructure.arn
+    }
   }
 
   deployment_controller {
     type = "ECS"
   }
 
-  # Automatic rollback if a new task set fails to stabilize - the
-  # available safety net today, ahead of full blue/green in Phase 8.
+  deployment_configuration {
+    strategy             = "BLUE_GREEN"
+    bake_time_in_minutes = var.bake_time_in_minutes
+  }
+
+  # Automatic rollback if the green task set fails to stabilize, or
+  # (thanks to the alarms block) if it stabilizes but starts erroring
+  # during bake time - either way ECS shifts traffic back to blue.
   deployment_circuit_breaker {
     enable   = true
     rollback = true
   }
+
+  # Blue/green temporarily runs both target groups' worth of tasks -
+  # 200% max means a full second copy is allowed to stand up alongside
+  # the original before the old one is torn down.
+  deployment_maximum_percent         = 200
+  deployment_minimum_healthy_percent = 100
 }

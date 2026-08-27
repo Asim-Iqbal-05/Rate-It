@@ -68,3 +68,9 @@ variable "desired_count" {
   type    = number
   default = 1
 }
+
+variable "bake_time_in_minutes" {
+  description = "How long blue and green both run after traffic shifts to green, before blue is torn down - the window to notice a bad deploy and roll back."
+  type        = number
+  default     = 5
+}

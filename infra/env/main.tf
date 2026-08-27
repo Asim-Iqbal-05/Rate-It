@@ -219,3 +219,15 @@ module "cloudfront" {
 
   web_acl_arn = module.waf.web_acl_arn
 }
+
+# --- Phase 8b: CI/CD automation -------------------------------------------
+
+module "cicd" {
+  source = "../modules/cicd"
+
+  project_name       = var.project_name
+  aws_region         = var.aws_region
+  github_repo        = "Asim-Iqbal-05/Rate-It"
+  state_bucket_name  = "rateit-terraform-state-cc5244ae"
+  ecr_repository_arn = module.ecr.repository_arn
+}
