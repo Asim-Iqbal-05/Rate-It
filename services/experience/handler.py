@@ -81,11 +81,17 @@ def lambda_handler(event, context):
 
     experience_id = str(uuid.uuid4())
     created_at = datetime.now(timezone.utc).isoformat()
+    # Time-bucketed GSI partition key (infra PRD §7.1) - "POST" alone
+    # would put every write and every feed read on one logical
+    # partition. Bucketing by month spreads that load, at the cost of
+    # Feed Service needing to walk backward across bucket boundaries
+    # to fill a page (see services/feed/app.py).
+    feed_bucket = f"POST#{created_at[:7]}"
 
     table.put_item(
         Item={
             "experienceId": experience_id,
-            "Type": "POST",
+            "Type": feed_bucket,
             "CreatedAt": created_at,
             "userId": user_id,
             "title": title,
