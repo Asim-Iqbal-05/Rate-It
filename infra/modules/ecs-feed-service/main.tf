@@ -290,4 +290,58 @@ resource "aws_ecs_service" "this" {
   # the original before the old one is torn down.
   deployment_maximum_percent         = 200
   deployment_minimum_healthy_percent = 100
+
+  # Bake-time gating (infra PRD §9): if either target group's unhealthy
+  # host alarm trips while both blue and green are running side by side
+  # during bake time, ECS rolls back on its own instead of waiting for
+  # someone to notice - the alarm-driven half of the safety net that
+  # deployment_circuit_breaker (stabilization failures) doesn't cover.
+  alarms {
+    alarm_names = [
+      aws_cloudwatch_metric_alarm.unhealthy_hosts_blue.alarm_name,
+      aws_cloudwatch_metric_alarm.unhealthy_hosts_green.alarm_name,
+    ]
+    enable   = true
+    rollback = true
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "unhealthy_hosts_blue" {
+  alarm_name          = "${var.project_name}-feed-blue-unhealthy-hosts"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "UnHealthyHostCount"
+  namespace           = "AWS/ApplicationELB"
+  period              = 60
+  statistic           = "Maximum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Feed Service blue target group has unhealthy hosts."
+  alarm_actions       = [var.alarm_sns_topic_arn]
+  ok_actions          = [var.alarm_sns_topic_arn]
+
+  dimensions = {
+    LoadBalancer = aws_lb.this.arn_suffix
+    TargetGroup  = aws_lb_target_group.blue.arn_suffix
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "unhealthy_hosts_green" {
+  alarm_name          = "${var.project_name}-feed-green-unhealthy-hosts"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "UnHealthyHostCount"
+  namespace           = "AWS/ApplicationELB"
+  period              = 60
+  statistic           = "Maximum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Feed Service green target group has unhealthy hosts."
+  alarm_actions       = [var.alarm_sns_topic_arn]
+  ok_actions          = [var.alarm_sns_topic_arn]
+
+  dimensions = {
+    LoadBalancer = aws_lb.this.arn_suffix
+    TargetGroup  = aws_lb_target_group.green.arn_suffix
+  }
 }

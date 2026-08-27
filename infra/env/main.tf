@@ -99,6 +99,42 @@ module "api_gateway" {
   }
 }
 
+# --- Phase 9: Observability (SNS topic declared early - both the Feed
+# Service's bake-time alarm gating and the broader observability module
+# need its ARN) -------------------------------------------------------
+
+resource "aws_sns_topic" "alerts" {
+  name = "${var.project_name}-alerts"
+}
+
+resource "aws_sns_topic_subscription" "alerts_email" {
+  topic_arn = aws_sns_topic.alerts.arn
+  protocol  = "email"
+  endpoint  = var.alarm_email
+}
+
+# CloudWatch alarms on CloudFront-scoped WAF metrics must themselves
+# live in us-east-1 (confirmed - not just the alarm resource, AWS
+# genuinely rejects the PutMetricAlarm call with "Invalid region
+# us-west-2 specified" even though the alarm itself is correctly
+# created in us-east-1). Less obviously, AWS *also* rejects that same
+# alarm if its alarm_actions/ok_actions point at an SNS topic in a
+# different region - cross-region alarm notification isn't allowed
+# here, confirmed by reproducing the exact error via the AWS CLI
+# directly (no Terraform involved) before concluding it wasn't a
+# provider bug. Hence a second, us-east-1-only topic just for these.
+resource "aws_sns_topic" "alerts_us_east_1" {
+  provider = aws.us_east_1
+  name     = "${var.project_name}-alerts-us-east-1"
+}
+
+resource "aws_sns_topic_subscription" "alerts_us_east_1_email" {
+  provider  = aws.us_east_1
+  topic_arn = aws_sns_topic.alerts_us_east_1.arn
+  protocol  = "email"
+  endpoint  = var.alarm_email
+}
+
 # --- Phase 5: Feed Service (ECS Fargate) ----------------------------------
 
 data "aws_availability_zones" "available" {
@@ -136,6 +172,8 @@ module "ecs_feed_service" {
 
   ecr_repository_url  = module.ecr.repository_url
   container_image_tag = var.feed_service_image_tag
+
+  alarm_sns_topic_arn = aws_sns_topic.alerts.arn
 }
 
 # VPC Link is the only path from API Gateway into the VPC (infra PRD
@@ -230,4 +268,34 @@ module "cicd" {
   github_repo        = "Asim-Iqbal-05/Rate-It"
   state_bucket_name  = "rateit-terraform-state-cc5244ae"
   ecr_repository_arn = module.ecr.repository_arn
+}
+
+# --- Phase 9: Observability (alarms + dashboard) --------------------------
+
+module "observability" {
+  source = "../modules/observability"
+  providers = {
+    aws.us_east_1 = aws.us_east_1
+  }
+
+  project_name = var.project_name
+  aws_region   = var.aws_region
+
+  alarm_sns_topic_arn           = aws_sns_topic.alerts.arn
+  alarm_sns_topic_arn_us_east_1 = aws_sns_topic.alerts_us_east_1.arn
+
+  media_service_function_name      = module.media_service.function_name
+  experience_service_function_name = module.experience_service.function_name
+
+  ecs_cluster_name              = module.ecs_feed_service.cluster_name
+  ecs_service_name              = module.ecs_feed_service.service_name
+  alb_arn_suffix                = module.ecs_feed_service.alb_arn_suffix
+  target_group_blue_arn_suffix  = module.ecs_feed_service.target_group_blue_arn_suffix
+  target_group_green_arn_suffix = module.ecs_feed_service.target_group_green_arn_suffix
+
+  dynamodb_table_name = module.dynamodb.table_name
+
+  waf_web_acl_name           = module.waf.web_acl_name
+  waf_token_rule_metric_name = module.waf.token_rule_metric_name
+  waf_ip_rule_metric_name    = module.waf.ip_rule_metric_name
 }

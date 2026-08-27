@@ -69,6 +69,11 @@ variable "desired_count" {
   default = 1
 }
 
+variable "alarm_sns_topic_arn" {
+  description = "SNS topic to notify on ALB target-group health alarms - also wired into the service's bake-time alarm-rollback gating."
+  type        = string
+}
+
 variable "bake_time_in_minutes" {
   description = "How long blue and green both run after traffic shifts to green, before blue is torn down - the window to notice a bad deploy and roll back."
   type        = number

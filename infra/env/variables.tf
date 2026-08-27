@@ -36,3 +36,9 @@ variable "parent_dns_zone_name" {
   type        = string
   default     = "internship.cloudelligent-sandbox.com"
 }
+
+variable "alarm_email" {
+  description = "Where CloudWatch alarm notifications are sent (infra PRD §9). AWS emails a one-time confirmation link that must be clicked before delivery starts."
+  type        = string
+  default     = "asim.iqbal@cloudelligent.com"
+}
