@@ -181,6 +181,20 @@ resource "aws_apigatewayv2_route" "feed" {
   authorizer_id      = module.api_gateway.authorizer_id
 }
 
+# --- Phase 7: Abuse hardening (declared before Phase 6's CloudFront so
+# the web ACL exists to attach - AWS WAF can't attach directly to an
+# HTTP API stage at all, only to CloudFront/ALB/REST APIs/etc, so this
+# attaches at CloudFront instead) -------------------------------------
+
+module "waf" {
+  source = "../modules/waf"
+  providers = {
+    aws.us_east_1 = aws.us_east_1
+  }
+
+  project_name = var.project_name
+}
+
 # --- Phase 6: Edge delivery ------------------------------------------------
 
 module "cloudfront" {
@@ -202,13 +216,6 @@ module "cloudfront" {
   uploads_bucket_regional_domain_name = module.s3_uploads.bucket_regional_domain_name
 
   api_gateway_domain = trimprefix(module.api_gateway.api_endpoint, "https://")
-}
 
-# --- Phase 7: Abuse hardening ----------------------------------------------
-
-module "waf" {
-  source = "../modules/waf"
-
-  project_name          = var.project_name
-  api_gateway_stage_arn = module.api_gateway.stage_arn
+  web_acl_arn = module.waf.web_acl_arn
 }

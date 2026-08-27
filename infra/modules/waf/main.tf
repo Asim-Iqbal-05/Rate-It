@@ -1,3 +1,23 @@
+terraform {
+  required_providers {
+    aws = {
+      source                = "hashicorp/aws"
+      configuration_aliases = [aws.us_east_1]
+    }
+  }
+}
+
+# Attached to CloudFront (below), not directly to API Gateway: AWS
+# WAF's AssociateWebACL simply does not support HTTP API (v2) stages
+# as a resource type at all - only REST API stages, ALB, AppSync,
+# Cognito user pools, App Runner, Verified Access, and Amplify apps
+# (confirmed against the current AssociateWebACL API reference).
+# CloudFront is also the better attachment point regardless: it's the
+# actual single public entry point for every path (/, /api/*,
+# /images/*), not just the API - and CloudFront-scoped web ACLs must
+# live in us-east-1 and use `web_acl_id` on the distribution itself,
+# not AssociateWebACL.
+#
 # Authentication answers who you are; it doesn't answer how many times
 # per second you're allowed to do it - these are separate concerns
 # (infra PRD §6). Two rules cover both cases WAF can actually see a
@@ -16,9 +36,11 @@
 # expects and handles ("slow down and try again"), not WAF's default
 # 403.
 resource "aws_wafv2_web_acl" "api" {
+  provider = aws.us_east_1
+
   name        = "${var.project_name}-api-waf"
-  description = "Rate limiting for the RateIt API"
-  scope       = "REGIONAL"
+  description = "Rate limiting for the RateIt app"
+  scope       = "CLOUDFRONT"
 
   default_action {
     allow {}
@@ -95,18 +117,12 @@ resource "aws_wafv2_web_acl" "api" {
 
     statement {
       rate_based_statement {
+        # A CloudFront-scoped web ACL evaluates at the edge, seeing the
+        # real viewer IP directly - no forwarded_ip_config needed here
+        # (that's only for a WAF sitting behind another proxy, like a
+        # regional ACL on an ALB/API Gateway would).
         limit              = var.rate_limit
         aggregate_key_type = "IP"
-
-        # This sits behind CloudFront (Phase 6), so the direct TCP
-        # connection IP WAF would otherwise see is CloudFront's edge
-        # IP, not the real caller's. CloudFront appends the real
-        # client IP to X-Forwarded-For for custom origins, so pull
-        # the aggregation key from there instead.
-        forwarded_ip_config {
-          header_name       = "X-Forwarded-For"
-          fallback_behavior = "MATCH"
-        }
 
         # The inverse of the rule above: only requests WITHOUT an
         # Authorization header fall into the IP-keyed bucket.
@@ -144,12 +160,4 @@ resource "aws_wafv2_web_acl" "api" {
     cloudwatch_metrics_enabled = true
     metric_name                = "${var.project_name}-api-waf"
   }
-}
-
-resource "aws_wafv2_web_acl_association" "api" {
-  # WAFv2's AssociateWebACL rejects a literal "$default" in the stage
-  # ARN ("The ARN isn't valid") even though every other AWS API accepts
-  # it as-is - it specifically wants the "$" percent-encoded.
-  resource_arn = replace(var.api_gateway_stage_arn, "$default", "%24default")
-  web_acl_arn  = aws_wafv2_web_acl.api.arn
 }

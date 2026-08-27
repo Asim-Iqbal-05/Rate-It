@@ -40,3 +40,9 @@ variable "api_gateway_domain" {
   description = "API Gateway hostname only, no scheme (e.g. abc123.execute-api.us-west-2.amazonaws.com)."
   type        = string
 }
+
+variable "web_acl_arn" {
+  description = "ARN of a CLOUDFRONT-scoped (us-east-1) WAFv2 web ACL to attach, or null for none."
+  type        = string
+  default     = null
+}

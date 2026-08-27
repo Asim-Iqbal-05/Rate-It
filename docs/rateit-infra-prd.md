@@ -21,23 +21,25 @@ The guiding principle: **one public entry point, one auth enforcement point, mix
 Route 53 (DNS)
       │
 CloudFront (single entry point, HTTPS enforced, OAC to origins)
-   ├── /*      → S3 frontend bucket (private, OAC-only)
-   └── /api/*  → API Gateway (HTTP API)
-                     │
-              WAF (rate-based rules: per-user sub, per-IP)
-                     │
-              Cognito JWT Authorizer (validates bearer token)
-                     │
-        ┌────────────┼────────────────────┐
-        │            │                    │
-  Media Service  Experience Service   VPC Link (private)
-  (Lambda)       (Lambda)                  │
-        │            │              Internal ALB
-        S3       DynamoDB, S3            │
-                                    ECS Fargate: Feed Service
-                                          │
-                                     DynamoDB (GSI)
+   │  WAF (rate-based rules: per-token via Authorization header, per-IP fallback)
+   ├── /*         → S3 frontend bucket (private, OAC-only)
+   ├── /images/*  → S3 uploads bucket (private, OAC-only)
+   └── /api/*     → API Gateway (HTTP API)
+                        │
+                 Cognito JWT Authorizer (validates bearer token)
+                        │
+        ┌───────────────┼────────────────────┐
+        │                │                    │
+  Media Service   Experience Service     VPC Link (private)
+  (Lambda)        (Lambda)                    │
+        │                │                Internal ALB
+        S3         DynamoDB, S3               │
+                                       ECS Fargate: Feed Service
+                                             │
+                                        DynamoDB (GSI)
 ```
+
+**WAF placement — deviation from the original diagram, decided during Phase 7:** originally drawn sitting directly in front of API Gateway. In practice, AWS WAF's `AssociateWebACL` does not support HTTP API (v2) stages as a resource type at all (only REST API stages, ALB, AppSync, Cognito pools, App Runner, Verified Access, Amplify) — confirmed against the live AWS API reference, not assumed. WAF is attached to CloudFront instead (`web_acl_id` directly on the distribution), which also means it now covers every path, not just `/api/*` — a strictly broader protection surface than originally planned, not a narrower one.
 
 **Compute split rationale:**
 - **Media & Experience Services** — short, stateless, single-purpose (sign a URL, write one record). No long-lived process needed, no VPC-only dependency. Lambda fits exactly; neither runs inside a VPC.
