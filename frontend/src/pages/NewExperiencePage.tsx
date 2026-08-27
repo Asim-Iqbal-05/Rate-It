@@ -17,6 +17,10 @@ import { StarRatingInput } from "../components/StarRatingInput";
 const MAX_TITLE_LENGTH = 100;
 const MAX_DESCRIPTION_LENGTH = 1000;
 const LARGE_FILE_WARNING_BYTES = 8 * 1024 * 1024;
+// Mirrors MAX_UPLOAD_BYTES in services/media/handler.py - S3's POST
+// policy hard-rejects anything over this, so it's worth catching
+// client-side with a clear message instead of letting the upload fail.
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 // Mirrors MAX_IMAGES in services/experience/handler.py - keep in sync.
 const MAX_IMAGES = 5;
 
@@ -79,18 +83,26 @@ export function NewExperiencePage() {
     const room = MAX_IMAGES - images.length;
     const toAdd = picked.slice(0, room);
 
-    const newItems: ImageItem[] = toAdd.map((file) => ({
-      id: crypto.randomUUID(),
-      file,
-      previewUrl: URL.createObjectURL(file),
-      status: "uploading",
-      imageKey: null,
-      error: null,
-      large: file.size > LARGE_FILE_WARNING_BYTES,
-    }));
+    const newItems: ImageItem[] = toAdd.map((file) => {
+      const tooLarge = file.size > MAX_UPLOAD_BYTES;
+      return {
+        id: crypto.randomUUID(),
+        file,
+        previewUrl: URL.createObjectURL(file),
+        status: tooLarge ? "error" : "uploading",
+        imageKey: null,
+        error: tooLarge
+          ? `That file is over the ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB limit - pick a smaller one.`
+          : null,
+        large: file.size > LARGE_FILE_WARNING_BYTES,
+      };
+    });
 
     setImages((prev) => [...prev, ...newItems]);
-    newItems.forEach(runUpload);
+    // Files over the hard limit are rejected up front (no point
+    // attempting an upload that S3's own POST policy will reject
+    // anyway) - only attempt ones that could actually succeed.
+    newItems.filter((img) => img.status === "uploading").forEach(runUpload);
   };
 
   const removeImage = (id: string) => {
@@ -190,7 +202,7 @@ export function NewExperiencePage() {
                     </span>
                   )}
 
-                  {img.status === "error" && (
+                  {img.status === "error" && img.file.size <= MAX_UPLOAD_BYTES && (
                     <button
                       type="button"
                       onClick={() => runUpload(img)}
@@ -198,6 +210,12 @@ export function NewExperiencePage() {
                     >
                       Retry
                     </button>
+                  )}
+
+                  {img.status === "error" && img.file.size > MAX_UPLOAD_BYTES && (
+                    <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-red-950/60 p-1 text-center text-[10px] font-medium text-white">
+                      Too large
+                    </div>
                   )}
 
                   <button
@@ -242,7 +260,13 @@ export function NewExperiencePage() {
               {images.some((img) => img.large) && " - large files may take a moment to upload"}
             </p>
 
-            {images.some((img) => img.status === "error") && (
+            {images.some((img) => img.status === "error" && img.file.size > MAX_UPLOAD_BYTES) && (
+              <Alert variant="error">
+                {`One or more photos are over the ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB limit - remove them and pick a smaller file.`}
+              </Alert>
+            )}
+
+            {images.some((img) => img.status === "error" && img.file.size <= MAX_UPLOAD_BYTES) && (
               <Alert variant="error">One or more photos failed to upload - tap to retry.</Alert>
             )}
           </div>

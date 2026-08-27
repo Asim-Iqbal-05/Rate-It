@@ -1,6 +1,7 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
 export class UnauthorizedError extends Error {}
+export class RateLimitedError extends Error {}
 
 /**
  * Fetch wrapper for the RateIt API. Attaches the bearer token and
@@ -29,6 +30,13 @@ export async function apiFetch(
 
   if (response.status === 401) {
     throw new UnauthorizedError("Session expired");
+  }
+
+  // WAF's rate limiting (infra PRD §7) can hit any endpoint, not just
+  // submit - centralized here so every caller gets the same friendly
+  // message instead of duplicating this check per API function.
+  if (response.status === 429) {
+    throw new RateLimitedError("Too many requests - slow down and try again.");
   }
 
   return response;
@@ -135,9 +143,6 @@ export async function createExperience(
   }
   if (res.status === 413) {
     throw new Error("That image is too large.");
-  }
-  if (res.status === 429) {
-    throw new Error("Too many requests - slow down and try again.");
   }
   if (!res.ok) {
     throw new Error("Could not create post");
