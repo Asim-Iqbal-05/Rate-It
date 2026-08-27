@@ -35,3 +35,6 @@ frontend/.vite/
 # OS / editor
 .DS_Store
 *.swp
+
+# Personal reference notes - not part of the project's committed docs
+docs/postmortem-phase6-cloudfront.md
