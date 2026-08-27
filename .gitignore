@@ -37,4 +37,4 @@ frontend/.vite/
 *.swp
 
 # Personal reference notes - not part of the project's committed docs
-docs/postmortem-phase6-cloudfront.md
+docs/postmortem-*.md
