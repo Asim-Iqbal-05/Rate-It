@@ -147,6 +147,9 @@ resource "aws_wafv2_web_acl" "api" {
 }
 
 resource "aws_wafv2_web_acl_association" "api" {
-  resource_arn = var.api_gateway_stage_arn
+  # WAFv2's AssociateWebACL rejects a literal "$default" in the stage
+  # ARN ("The ARN isn't valid") even though every other AWS API accepts
+  # it as-is - it specifically wants the "$" percent-encoded.
+  resource_arn = replace(var.api_gateway_stage_arn, "$default", "%24default")
   web_acl_arn  = aws_wafv2_web_acl.api.arn
 }
