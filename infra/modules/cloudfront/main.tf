@@ -82,6 +82,23 @@ data "aws_cloudfront_origin_request_policy" "all_viewer_except_host" {
   name = "Managed-AllViewerExceptHostHeader"
 }
 
+# Object keys in the uploads bucket are "{userId}/{uuid}.jpg" - no
+# "images/" prefix. The /images/* path pattern is a URL-space
+# convenience, not part of the actual S3 key, so it has to be
+# stripped before the request reaches the origin or S3 404s.
+resource "aws_cloudfront_function" "strip_images_prefix" {
+  name    = "${var.project_name}-strip-images-prefix"
+  runtime = "cloudfront-js-1.0"
+  publish = true
+  code    = <<-EOT
+    function handler(event) {
+        var request = event.request;
+        request.uri = request.uri.replace(/^\/images/, '');
+        return request;
+    }
+  EOT
+}
+
 resource "aws_cloudfront_distribution" "this" {
   enabled             = true
   is_ipv6_enabled     = true
@@ -131,6 +148,11 @@ resource "aws_cloudfront_distribution" "this" {
     target_origin_id       = "uploads"
     viewer_protocol_policy = "redirect-to-https"
     cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.strip_images_prefix.arn
+    }
   }
 
   # /api/* -> API Gateway, NOT cached by default (infra PRD §4) - the
