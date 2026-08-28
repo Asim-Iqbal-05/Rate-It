@@ -74,6 +74,23 @@ variable "alarm_sns_topic_arn" {
   type        = string
 }
 
+variable "autoscaling_min_capacity" {
+  type    = number
+  default = 1
+}
+
+variable "autoscaling_max_capacity" {
+  description = "Upper bound on concurrent tasks - kept small deliberately for this project's scale/cost, not a hard technical ceiling."
+  type        = number
+  default     = 3
+}
+
+variable "autoscaling_cpu_target" {
+  description = "Target average CPU % the scaling policy tries to hold - set below the CPU alarm's threshold (80%, see the observability module) so scaling reacts before the alarm would ever need to fire."
+  type        = number
+  default     = 60
+}
+
 variable "bake_time_in_minutes" {
   description = "How long blue and green both run after traffic shifts to green, before blue is torn down - the window to notice a bad deploy and roll back."
   type        = number

@@ -20,9 +20,8 @@ variable "upload_cors_origins" {
 }
 
 variable "feed_service_image_tag" {
-  description = "Image tag in the Feed Service ECR repo to deploy. Build and push it before applying, or the ECS service will fail to pull on first launch."
+  description = "Image tag in the Feed Service ECR repo to deploy - always pass explicitly (the pipeline always does). No default on purpose: a stale \"latest\" default previously caused a real incident where a bare `terraform apply` silently reverted Feed Service to an old image (docs/postmortem-phase9-observability.md) - failing loudly here beats that."
   type        = string
-  default     = "latest"
 }
 
 variable "custom_domain_name" {

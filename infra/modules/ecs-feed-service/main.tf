@@ -304,6 +304,48 @@ resource "aws_ecs_service" "this" {
     enable   = true
     rollback = true
   }
+
+  # Once Application Auto Scaling (below) is registered, it owns
+  # desired_count live - without this, every `terraform apply` would
+  # fight it and stomp desiredCount back to var.desired_count.
+  lifecycle {
+    ignore_changes = [desired_count]
+  }
+}
+
+# --- Autoscaling -----------------------------------------------------------
+# Target tracking on CPU: simpler and more common than request-count
+# tracking, and this service's own CloudWatch CPU alarm (below) already
+# uses the same metric, so the two stay conceptually aligned - the
+# alarm is a backstop/notification, the scaling target here is meant
+# to react well before CPU ever gets that high.
+
+resource "aws_appautoscaling_target" "feed_service" {
+  service_namespace  = "ecs"
+  resource_id        = "service/${aws_ecs_cluster.this.name}/${aws_ecs_service.this.name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  min_capacity       = var.autoscaling_min_capacity
+  max_capacity       = var.autoscaling_max_capacity
+}
+
+resource "aws_appautoscaling_policy" "feed_service_cpu" {
+  name               = "${var.project_name}-feed-service-cpu-tracking"
+  policy_type        = "TargetTrackingScaling"
+  service_namespace  = aws_appautoscaling_target.feed_service.service_namespace
+  resource_id        = aws_appautoscaling_target.feed_service.resource_id
+  scalable_dimension = aws_appautoscaling_target.feed_service.scalable_dimension
+
+  target_tracking_scaling_policy_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageCPUUtilization"
+    }
+    target_value = var.autoscaling_cpu_target
+    # Scale out quickly when load actually shows up; scale back in
+    # slowly so a brief dip doesn't immediately tear down a task that
+    # real traffic might need again a minute later.
+    scale_out_cooldown = 60
+    scale_in_cooldown  = 300
+  }
 }
 
 resource "aws_cloudwatch_metric_alarm" "unhealthy_hosts_blue" {
