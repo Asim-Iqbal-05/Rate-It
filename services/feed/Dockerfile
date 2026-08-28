@@ -1,4 +1,9 @@
-FROM python:3.13-slim
+# Pulled from the ECR Public mirror, not Docker Hub directly - CodeBuild
+# shares egress IPs across many AWS customers' builds, which routinely
+# trips Docker Hub's per-IP anonymous pull rate limit (429 Too Many
+# Requests). The ECR Public Gallery mirrors official images without
+# that limit.
+FROM public.ecr.aws/docker/library/python:3.13-slim
 
 WORKDIR /app
 
