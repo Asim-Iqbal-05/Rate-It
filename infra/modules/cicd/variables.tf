@@ -31,3 +31,19 @@ variable "terraform_version" {
   type    = string
   default = "1.15.9"
 }
+
+variable "frontend_bucket_name" {
+  type = string
+}
+
+variable "frontend_bucket_arn" {
+  type = string
+}
+
+variable "cloudfront_distribution_id" {
+  type = string
+}
+
+variable "cloudfront_distribution_arn" {
+  type = string
+}

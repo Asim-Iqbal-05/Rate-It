@@ -1,3 +1,5 @@
+data "aws_caller_identity" "current" {}
+
 module "cognito" {
   source = "../modules/cognito"
 
@@ -268,6 +270,12 @@ module "cicd" {
   github_repo        = "Asim-Iqbal-05/Rate-It"
   state_bucket_name  = "rateit-terraform-state-cc5244ae"
   ecr_repository_arn = module.ecr.repository_arn
+
+  frontend_bucket_name = module.s3_frontend.bucket_name
+  frontend_bucket_arn  = module.s3_frontend.bucket_arn
+
+  cloudfront_distribution_id  = module.cloudfront.distribution_id
+  cloudfront_distribution_arn = "arn:aws:cloudfront::${data.aws_caller_identity.current.account_id}:distribution/${module.cloudfront.distribution_id}"
 }
 
 # --- Phase 9: Observability (alarms + dashboard) --------------------------

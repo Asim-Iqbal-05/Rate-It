@@ -143,6 +143,24 @@ data "aws_iam_policy_document" "codebuild_plan" {
     ]
     resources = [var.ecr_repository_arn]
   }
+
+  # Frontend deploy runs in this same project (not a separate one) -
+  # the account's Service Control Policy caps this project prefix at
+  # exactly the 2 CodeBuild projects already provisioned (confirmed by
+  # a real CreateProject AccessDeniedException citing the SCP when a
+  # 3rd was attempted), so a static-site sync has to share a project
+  # rather than get its own.
+  statement {
+    sid       = "SyncFrontendBucket"
+    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
+    resources = [var.frontend_bucket_arn, "${var.frontend_bucket_arn}/*"]
+  }
+
+  statement {
+    sid       = "InvalidateDistribution"
+    actions   = ["cloudfront:CreateInvalidation"]
+    resources = [var.cloudfront_distribution_arn]
+  }
 }
 
 resource "aws_iam_role_policy" "codebuild_plan" {
@@ -235,6 +253,8 @@ locals {
       TF_VERSION: "${var.terraform_version}"
   phases:
     install:
+      runtime-versions:
+        nodejs: 18
       commands:
         - curl -sL -o /tmp/terraform.zip https://releases.hashicorp.com/terraform/$TF_VERSION/terraform_$${TF_VERSION}_linux_amd64.zip
         - unzip -o /tmp/terraform.zip -d /usr/local/bin
@@ -245,6 +265,12 @@ locals {
         - echo "$IMAGE_TAG" > image_tag.txt
     build:
       commands:
+        # Frontend: plain static-site deploy, no infra risk, so it
+        # just runs unconditionally here rather than needing its own
+        # CodeBuild project (the account's SCP caps this project
+        # prefix at 2 projects - already used by plan/apply).
+        - (cd frontend && npm ci && npm run build && aws s3 sync dist/ s3://${var.frontend_bucket_name}/ --delete && aws cloudfront create-invalidation --distribution-id ${var.cloudfront_distribution_id} --paths "/*")
+        - rm -rf frontend/node_modules frontend/dist # not needed downstream - keep the Apply stage's artifact lean
         - ECR_REPO_URL=$(echo "${var.ecr_repository_arn}" | cut -d'/' -f2)
         - ECR_REPO_URL="${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com/$ECR_REPO_URL"
         - docker build -t "$ECR_REPO_URL:$IMAGE_TAG" services/feed
@@ -353,8 +379,12 @@ resource "aws_codepipeline" "this" {
     }
   }
 
+  # This single action does both the frontend deploy (unconditional,
+  # no gate - a static-site sync carries no infra risk) and the
+  # backend's build+plan (gated behind Approve/Apply below) - see the
+  # plan_buildspec comment for why they share one CodeBuild project.
   stage {
-    name = "Plan"
+    name = "Build"
     action {
       name             = "BuildAndPlan"
       category         = "Build"
