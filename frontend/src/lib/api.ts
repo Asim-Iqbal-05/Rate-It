@@ -80,12 +80,28 @@ export async function uploadImageToS3(
   for (const [key, value] of Object.entries(fields)) {
     formData.append(key, value);
   }
-  formData.append("Content-Type", file.type);
+  // The S3 POST policy requires Content-Type to start with "image/"
+  // (services/media/handler.py). Some browsers - notably iOS Safari
+  // picking a photo straight from the library - report an empty or
+  // unexpected file.type (e.g. for HEIC photos not yet fully
+  // downloaded from iCloud), which would otherwise fail that policy
+  // outright. The server never actually inspects real file bytes
+  // either way (a documented soft check), so falling back to a
+  // generic image type here costs nothing and closes that failure.
+  const contentType = file.type.startsWith("image/") ? file.type : "image/jpeg";
+  formData.append("Content-Type", contentType);
   formData.append("file", file);
 
   const res = await fetch(url, { method: "POST", body: formData });
   if (!res.ok) {
-    throw new Error("Image upload failed");
+    // Surface S3's actual reason (e.g. a specific policy condition
+    // that failed, or an expired upload URL) instead of a generic
+    // message - the difference matters for diagnosing failures we
+    // can't easily reproduce locally (e.g. mobile-only issues).
+    const body = await res.text().catch(() => "");
+    const message = /<Message>(.*?)<\/Message>/.exec(body)?.[1];
+    console.error("S3 upload failed", res.status, body);
+    throw new Error(message ? `Upload failed: ${message}` : "Image upload failed");
   }
 }
 
