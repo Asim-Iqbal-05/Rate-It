@@ -31,13 +31,6 @@ PAGE_SIZE = 20
 # an old/sparse pagination request from issuing unbounded empty queries.
 MAX_MONTH_BUCKETS_PER_REQUEST = 24
 
-# Transitional: items written before this migration still carry the
-# old constant partition key. Falling back to it after exhausting the
-# monthly buckets keeps the feed complete during the backfill window -
-# remove this once scripts/backfill_feed_buckets.py has been run and
-# confirmed (no item should ever have Type == "POST" again afterward).
-LEGACY_BUCKET = "POST"
-
 table = dynamodb.Table(TABLE_NAME)
 
 
@@ -69,10 +62,8 @@ def _decrement_month(bucket: str) -> str:
 
 
 def _next_bucket(bucket: str, months_tried: int) -> Optional[str]:
-    if bucket == LEGACY_BUCKET:
-        return None  # nothing left anywhere - true end of the feed
     if months_tried >= MAX_MONTH_BUCKETS_PER_REQUEST:
-        return LEGACY_BUCKET
+        return None  # exhausted the walk-back bound - true end of the feed
     return _decrement_month(bucket)
 
 
@@ -117,8 +108,7 @@ def get_feed(pageToken: Optional[str] = Query(default=None)):
             cursor = {"bucket": bucket, "key": result["LastEvaluatedKey"]}
             break
 
-        if bucket != LEGACY_BUCKET:
-            months_tried += 1
+        months_tried += 1
         next_bucket = _next_bucket(bucket, months_tried)
         if next_bucket is None:
             cursor = None  # exhausted every bucket - true end of feed
