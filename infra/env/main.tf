@@ -213,6 +213,10 @@ module "ecs_feed_service" {
   table_arn       = module.dynamodb.table_arn
   feed_index_name = module.dynamodb.feed_index_name
 
+  author_index_name    = module.dynamodb.author_index_name
+  reactions_table_name = module.dynamodb.reactions_table_name
+  reactions_table_arn  = module.dynamodb.reactions_table_arn
+
   public_image_base_url = "https://${var.custom_domain_name}"
 
   ecr_repository_url  = module.ecr.repository_url
@@ -254,6 +258,13 @@ resource "aws_apigatewayv2_integration" "feed" {
   connection_type        = "VPC_LINK"
   connection_id          = aws_apigatewayv2_vpc_link.feed.id
   payload_format_version = "1.0"
+
+  # Tell Feed Service who is calling. "overwrite" replaces any header the
+  # client sent with the same name, so the caller can't forge it; the
+  # value comes from the already-verified JWT (extension PRD §7.6).
+  request_parameters = {
+    "overwrite:header.x-user-sub" = "$context.authorizer.claims.sub"
+  }
 }
 
 resource "aws_apigatewayv2_route" "feed" {

@@ -37,9 +37,20 @@ resource "aws_iam_role" "task" {
 
 data "aws_iam_policy_document" "task_permissions" {
   statement {
-    sid       = "ReadFeed"
-    actions   = ["dynamodb:Query"]
-    resources = [var.table_arn, "${var.table_arn}/index/${var.feed_index_name}"]
+    sid     = "ReadFeed"
+    actions = ["dynamodb:Query"]
+    resources = [
+      var.table_arn,
+      "${var.table_arn}/index/${var.feed_index_name}",
+      "${var.table_arn}/index/${var.author_index_name}",
+    ]
+  }
+
+  # Like counts and the caller's own like state (extension PRD §7.6).
+  statement {
+    sid       = "ReadReactions"
+    actions   = ["dynamodb:BatchGetItem"]
+    resources = [var.reactions_table_arn]
   }
 
   # No S3 permissions: since Phase 6, image URLs are constructed as
@@ -229,6 +240,8 @@ resource "aws_ecs_task_definition" "this" {
       environment = [
         { name = "TABLE_NAME", value = var.table_name },
         { name = "FEED_INDEX_NAME", value = var.feed_index_name },
+        { name = "AUTHOR_INDEX_NAME", value = var.author_index_name },
+        { name = "REACTIONS_TABLE_NAME", value = var.reactions_table_name },
         { name = "PUBLIC_IMAGE_BASE_URL", value = var.public_image_base_url },
       ]
       logConfiguration = {

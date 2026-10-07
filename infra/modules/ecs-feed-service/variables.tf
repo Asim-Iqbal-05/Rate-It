@@ -30,6 +30,18 @@ variable "feed_index_name" {
   type = string
 }
 
+variable "author_index_name" {
+  type = string
+}
+
+variable "reactions_table_name" {
+  type = string
+}
+
+variable "reactions_table_arn" {
+  type = string
+}
+
 variable "public_image_base_url" {
   description = "Public base URL images are served from (CloudFront custom domain) - the task constructs /images/{key} links from this, no S3 access needed."
   type        = string
