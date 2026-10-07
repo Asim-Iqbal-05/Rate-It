@@ -39,16 +39,28 @@ resource "aws_dynamodb_table" "experiences" {
   }
 
   global_secondary_index {
-    name            = "TypeCreatedAtIndex"
-    hash_key        = "Type"
-    range_key       = "CreatedAt"
+    name = "TypeCreatedAtIndex"
+    key_schema {
+      attribute_name = "Type"
+      key_type       = "HASH"
+    }
+    key_schema {
+      attribute_name = "CreatedAt"
+      key_type       = "RANGE"
+    }
     projection_type = "ALL" # feed reads need the full item, not just keys
   }
 
   global_secondary_index {
-    name            = "userId-CreatedAt-index"
-    hash_key        = "userId"
-    range_key       = "CreatedAt"
+    name = "userId-CreatedAt-index"
+    key_schema {
+      attribute_name = "userId"
+      key_type       = "HASH"
+    }
+    key_schema {
+      attribute_name = "CreatedAt"
+      key_type       = "RANGE"
+    }
     projection_type = "ALL"
   }
 

@@ -10,10 +10,34 @@ terraform {
 # No build step: these services have zero third-party dependencies
 # (boto3 ships with the Lambda Python runtime), so the source directory
 # is zipped as-is.
+locals {
+  # Compiled caches that appear locally after running a service's tests
+  # (and never in a fresh CI checkout) are not part of the package.
+  ignored_files = [
+    for f in fileset(var.source_dir, "**") : f
+    if strcontains(f, "__pycache__") || endswith(f, ".pyc")
+  ]
+
+  package_files = sort([
+    for f in fileset(var.source_dir, "**") : f
+    if !contains(local.ignored_files, f)
+  ])
+
+  # Hash of the file CONTENTS, not of the zip. The zip's bytes also depend
+  # on file modification times (and permissions), which differ between a
+  # local checkout and CodeBuild's fresh `git checkout` - so hashing the zip
+  # made every plan show every Lambda as "changed" even when no code had.
+  # A content hash only changes when the code does.
+  source_hash = base64sha256(join("\n", [
+    for f in local.package_files : "${f}:${filesha256("${var.source_dir}/${f}")}"
+  ]))
+}
+
 data "archive_file" "package" {
   type        = "zip"
   source_dir  = var.source_dir
   output_path = "${path.module}/dist/${var.function_name}.zip"
+  excludes    = local.ignored_files
 }
 
 resource "aws_iam_role" "this" {
@@ -55,7 +79,7 @@ resource "aws_lambda_function" "this" {
   role          = aws_iam_role.this.arn
 
   filename         = data.archive_file.package.output_path
-  source_code_hash = data.archive_file.package.output_base64sha256
+  source_code_hash = local.source_hash
 
   handler = var.handler
   runtime = var.runtime
