@@ -11,7 +11,7 @@ resource "aws_apigatewayv2_api" "this" {
   # bucket's CORS config.
   cors_configuration {
     allow_origins = var.allowed_origins
-    allow_methods = ["GET", "POST", "OPTIONS"]
+    allow_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
     allow_headers = ["authorization", "content-type"]
     max_age       = 300
   }
@@ -63,7 +63,9 @@ resource "aws_apigatewayv2_route" "this" {
 resource "aws_lambda_permission" "this" {
   for_each = var.routes
 
-  statement_id  = "AllowInvokeFrom-${replace(replace(each.key, " ", "-"), "/", "-")}"
+  # Lambda statement IDs only allow [A-Za-z0-9_-], so path-parameter
+  # braces in a route key ("{experienceId}") have to go too.
+  statement_id  = "AllowInvokeFrom-${replace(replace(replace(replace(each.key, " ", "-"), "/", "-"), "{", ""), "}", "")}"
   action        = "lambda:InvokeFunction"
   function_name = each.value.function_name
   qualifier     = "live"

@@ -23,6 +23,10 @@ variable "experience_service_function_name" {
   type = string
 }
 
+variable "reactions_service_function_name" {
+  type = string
+}
+
 variable "ecs_cluster_name" {
   type = string
 }
@@ -44,6 +48,15 @@ variable "target_group_green_arn_suffix" {
 }
 
 variable "dynamodb_table_name" {
+  type = string
+}
+
+variable "dynamodb_index_names" {
+  description = "Experiences GSIs to alarm on. A throttled GSI also throttles writes to the base table, so the table-level alarm alone isn't enough."
+  type        = list(string)
+}
+
+variable "dynamodb_reactions_table_name" {
   type = string
 }
 

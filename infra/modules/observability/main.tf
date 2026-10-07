@@ -13,6 +13,7 @@ resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
   for_each = {
     media_service      = var.media_service_function_name
     experience_service = var.experience_service_function_name
+    reactions_service  = var.reactions_service_function_name
   }
 
   alarm_name          = "${var.project_name}-${replace(each.key, "_", "-")}-errors"
@@ -37,6 +38,7 @@ resource "aws_cloudwatch_metric_alarm" "lambda_duration" {
   for_each = {
     media_service      = var.media_service_function_name
     experience_service = var.experience_service_function_name
+    reactions_service  = var.reactions_service_function_name
   }
 
   alarm_name          = "${var.project_name}-${replace(each.key, "_", "-")}-duration"
@@ -100,6 +102,75 @@ resource "aws_cloudwatch_metric_alarm" "dynamodb_throttles" {
 
   dimensions = {
     TableName = var.dynamodb_table_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "reactions_table_throttles" {
+  alarm_name          = "${var.project_name}-reactions-table-throttles"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "ThrottledRequests"
+  namespace           = "AWS/DynamoDB"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = var.dynamodb_throttle_threshold
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "DynamoDB throttled requests on the reactions table."
+  alarm_actions       = [var.alarm_sns_topic_arn]
+  ok_actions          = [var.alarm_sns_topic_arn]
+
+  dimensions = {
+    TableName = var.dynamodb_reactions_table_name
+  }
+}
+
+# Per-index throttling on the Experiences table. Index-level metrics
+# aren't included in the table-level ThrottledRequests alarm above.
+resource "aws_cloudwatch_metric_alarm" "experiences_index_throttles" {
+  for_each = toset(var.dynamodb_index_names)
+
+  alarm_name          = "${var.project_name}-experiences-${each.value}-throttles"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  threshold           = var.dynamodb_throttle_threshold
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Throttle events on Experiences index ${each.value} - a throttled index also throttles writes to the base table."
+  alarm_actions       = [var.alarm_sns_topic_arn]
+  ok_actions          = [var.alarm_sns_topic_arn]
+
+  metric_query {
+    id          = "total"
+    expression  = "reads + writes"
+    label       = "Throttle events"
+    return_data = true
+  }
+
+  metric_query {
+    id = "reads"
+    metric {
+      metric_name = "ReadThrottleEvents"
+      namespace   = "AWS/DynamoDB"
+      period      = 300
+      stat        = "Sum"
+      dimensions = {
+        TableName                = var.dynamodb_table_name
+        GlobalSecondaryIndexName = each.value
+      }
+    }
+  }
+
+  metric_query {
+    id = "writes"
+    metric {
+      metric_name = "WriteThrottleEvents"
+      namespace   = "AWS/DynamoDB"
+      period      = 300
+      stat        = "Sum"
+      dimensions = {
+        TableName                = var.dynamodb_table_name
+        GlobalSecondaryIndexName = each.value
+      }
+    }
   }
 }
 

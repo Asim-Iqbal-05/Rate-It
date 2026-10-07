@@ -78,6 +78,41 @@ module "experience_service" {
   additional_policy_json = data.aws_iam_policy_document.experience_service.json
 }
 
+# --- Extension: Reactions Service (likes) ---------------------------------
+
+data "aws_iam_policy_document" "reactions_service" {
+  statement {
+    sid       = "WriteReactions"
+    actions   = ["dynamodb:PutItem", "dynamodb:DeleteItem", "dynamodb:UpdateItem"]
+    resources = [module.dynamodb.reactions_table_arn]
+  }
+
+  # Read-only existence check on the post inside the like transaction -
+  # no write access to Experiences (extension PRD §4, invariant 1).
+  statement {
+    sid       = "CheckPostExists"
+    actions   = ["dynamodb:ConditionCheckItem"]
+    resources = [module.dynamodb.table_arn]
+  }
+}
+
+module "reactions_service" {
+  source = "../modules/lambda-function"
+
+  function_name = "${var.project_name}-reactions-service"
+  source_dir    = "${path.module}/../../services/reactions"
+  handler       = "handler.lambda_handler"
+  memory_size   = 256
+  timeout       = 5
+
+  environment_variables = {
+    REACTIONS_TABLE   = module.dynamodb.reactions_table_name
+    EXPERIENCES_TABLE = module.dynamodb.table_name
+  }
+
+  additional_policy_json = data.aws_iam_policy_document.reactions_service.json
+}
+
 # --- Phase 4: API Gateway + write path -----------------------------------
 
 module "api_gateway" {
@@ -97,6 +132,14 @@ module "api_gateway" {
     "POST /api/experiences" = {
       function_name = module.experience_service.function_name
       invoke_arn    = module.experience_service.alias_invoke_arn
+    }
+    "PUT /api/experiences/{experienceId}/like" = {
+      function_name = module.reactions_service.function_name
+      invoke_arn    = module.reactions_service.alias_invoke_arn
+    }
+    "DELETE /api/experiences/{experienceId}/like" = {
+      function_name = module.reactions_service.function_name
+      invoke_arn    = module.reactions_service.alias_invoke_arn
     }
   }
 }
@@ -233,6 +276,7 @@ module "waf" {
   }
 
   project_name = var.project_name
+  rate_limit   = var.waf_rate_limit
 }
 
 # --- Phase 6: Edge delivery ------------------------------------------------
@@ -294,6 +338,7 @@ module "observability" {
 
   media_service_function_name      = module.media_service.function_name
   experience_service_function_name = module.experience_service.function_name
+  reactions_service_function_name  = module.reactions_service.function_name
 
   ecs_cluster_name              = module.ecs_feed_service.cluster_name
   ecs_service_name              = module.ecs_feed_service.service_name
@@ -301,7 +346,9 @@ module "observability" {
   target_group_blue_arn_suffix  = module.ecs_feed_service.target_group_blue_arn_suffix
   target_group_green_arn_suffix = module.ecs_feed_service.target_group_green_arn_suffix
 
-  dynamodb_table_name = module.dynamodb.table_name
+  dynamodb_table_name           = module.dynamodb.table_name
+  dynamodb_index_names          = [module.dynamodb.feed_index_name, module.dynamodb.author_index_name]
+  dynamodb_reactions_table_name = module.dynamodb.reactions_table_name
 
   waf_web_acl_name           = module.waf.web_acl_name
   waf_token_rule_metric_name = module.waf.token_rule_metric_name

@@ -41,3 +41,9 @@ variable "alarm_email" {
   type        = string
   default     = "asim.iqbal@cloudelligent.com"
 }
+
+variable "waf_rate_limit" {
+  description = "Max requests per 5-minute window per auth token (or per IP when unauthenticated) before WAF returns 429. Raised from the original 50 so liking while scrolling doesn't trip it (extension PRD §8.3) - tune from WAF metrics."
+  type        = number
+  default     = 300
+}
