@@ -99,11 +99,12 @@ data "aws_iam_policy_document" "reactions_service" {
 module "reactions_service" {
   source = "../modules/lambda-function"
 
-  function_name = "${var.project_name}-reactions-service"
-  source_dir    = "${path.module}/../../services/reactions"
-  handler       = "handler.lambda_handler"
-  memory_size   = 256
-  timeout       = 5
+  function_name    = "${var.project_name}-reactions-service"
+  manage_log_group = true
+  source_dir       = "${path.module}/../../services/reactions"
+  handler          = "handler.lambda_handler"
+  memory_size      = 256
+  timeout          = 5
 
   environment_variables = {
     REACTIONS_TABLE   = module.dynamodb.reactions_table_name
@@ -182,11 +183,12 @@ data "aws_iam_policy_document" "moderation_service" {
 module "moderation_service" {
   source = "../modules/lambda-function"
 
-  function_name = "${var.project_name}-moderation-service"
-  source_dir    = "${path.module}/../../services/moderation"
-  handler       = "handler.lambda_handler"
-  memory_size   = 512
-  timeout       = 60
+  function_name    = "${var.project_name}-moderation-service"
+  manage_log_group = true
+  source_dir       = "${path.module}/../../services/moderation"
+  handler          = "handler.lambda_handler"
+  memory_size      = 512
+  timeout          = 60
 
   environment_variables = {
     UPLOADS_BUCKET     = module.s3_uploads.bucket_name

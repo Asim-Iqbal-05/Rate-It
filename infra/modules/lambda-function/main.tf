@@ -44,6 +44,12 @@ resource "aws_iam_role_policy" "additional" {
   policy = var.additional_policy_json
 }
 
+resource "aws_cloudwatch_log_group" "this" {
+  count             = var.manage_log_group ? 1 : 0
+  name              = "/aws/lambda/${var.function_name}"
+  retention_in_days = var.log_retention_days
+}
+
 resource "aws_lambda_function" "this" {
   function_name = var.function_name
   role          = aws_iam_role.this.arn
@@ -61,6 +67,8 @@ resource "aws_lambda_function" "this" {
   # pointing at it is the versioned-alias deploy strategy from infra
   # PRD §8.2 - Terraform naturally does this when the zip hash changes.
   publish = true
+
+  depends_on = [aws_cloudwatch_log_group.this]
 
   dynamic "environment" {
     for_each = length(var.environment_variables) > 0 ? [1] : []

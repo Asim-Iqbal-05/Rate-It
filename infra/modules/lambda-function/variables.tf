@@ -40,3 +40,14 @@ variable "additional_policy_json" {
   type        = string
   default     = null
 }
+
+variable "manage_log_group" {
+  description = "Create the function's CloudWatch log group in Terraform. Needed for new functions: the account's SCP rejects untagged CreateLogGroup calls, which is what Lambda's automatic creation makes, so without this the function silently has no logs. Leave false for functions whose log group already exists (it would fail with ResourceAlreadyExists)."
+  type        = bool
+  default     = false
+}
+
+variable "log_retention_days" {
+  type    = number
+  default = 14
+}
