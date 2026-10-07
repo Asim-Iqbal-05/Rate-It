@@ -4,18 +4,21 @@ import uuid
 from datetime import datetime, timezone
 
 import boto3
+from botocore.exceptions import ClientError
 
 dynamodb = boto3.resource("dynamodb")
 s3_client = boto3.client("s3")
 
 TABLE_NAME = os.environ["TABLE_NAME"]
 UPLOADS_BUCKET = os.environ["UPLOADS_BUCKET"]
+REACTIONS_TABLE = os.environ["REACTIONS_TABLE"]
 
 MAX_TITLE_LENGTH = 100
 MAX_DESCRIPTION_LENGTH = 1000
 MAX_IMAGES = 5
 
 table = dynamodb.Table(TABLE_NAME)
+reactions_table = dynamodb.Table(REACTIONS_TABLE)
 
 
 class ValidationError(Exception):
@@ -69,6 +72,9 @@ def _validate(body, user_id):
 def lambda_handler(event, context):
     user_id = _user_id(event)
 
+    if event["requestContext"]["http"]["method"] == "DELETE":
+        return _delete_experience(event, user_id)
+
     try:
         body = json.loads(event.get("body") or "{}")
     except json.JSONDecodeError:
@@ -116,6 +122,87 @@ def lambda_handler(event, context):
         "headers": {"Content-Type": "application/json"},
         "body": json.dumps({"experienceId": experience_id, "createdAt": created_at}),
     }
+
+
+def _log_error(event_name, experience_id, error):
+    print(
+        json.dumps(
+            {
+                "level": "error",
+                "event": event_name,
+                "experienceId": experience_id,
+                "error": repr(error),
+            }
+        )
+    )
+
+
+def _delete_experience(event, user_id):
+    experience_id = (event.get("pathParameters") or {}).get("experienceId", "")
+
+    item = table.get_item(Key={"experienceId": experience_id}, ConsistentRead=True).get("Item")
+    if not item:
+        return _error(404, "experienceId", "post not found")
+    if item.get("userId") != user_id:
+        return _error(403, "experienceId", "not your post")
+
+    # Deleting the item removes it from both GSIs, so it leaves the feed
+    # immediately. The condition guards against it changing hands or
+    # vanishing between the read above and this write.
+    try:
+        table.delete_item(
+            Key={"experienceId": experience_id},
+            ConditionExpression="userId = :sub",
+            ExpressionAttributeValues={":sub": user_id},
+        )
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            return _error(404, "experienceId", "post not found")
+        raise
+
+    # From here the post is gone, which is what the user asked for. A
+    # failed cleanup only leaves harmless orphans (no new likes can
+    # arrive - Reactions Service checks the post exists), so log it and
+    # still return success rather than telling the user it failed.
+    try:
+        _delete_images(item.get("imageKeys", []))
+    except Exception as e:
+        _log_error("delete_images_failed", experience_id, e)
+    try:
+        _delete_reactions(experience_id)
+    except Exception as e:
+        _log_error("delete_reactions_failed", experience_id, e)
+
+    return {"statusCode": 204}
+
+
+def _delete_images(image_keys):
+    if not image_keys:
+        return
+    response = s3_client.delete_objects(
+        Bucket=UPLOADS_BUCKET,
+        Delete={"Objects": [{"Key": k} for k in image_keys], "Quiet": True},
+    )
+    if response.get("Errors"):
+        raise RuntimeError(f"S3 failed to delete: {response['Errors']}")
+
+
+def _delete_reactions(experience_id):
+    # batch_writer groups deletes into BatchWriteItem calls of 25 and
+    # resends any UnprocessedItems itself.
+    kwargs = {
+        "KeyConditionExpression": "experienceId = :e",
+        "ExpressionAttributeValues": {":e": experience_id},
+        "ProjectionExpression": "experienceId, userId",
+    }
+    with reactions_table.batch_writer() as batch:
+        while True:
+            page = reactions_table.query(**kwargs)
+            for row in page["Items"]:
+                batch.delete_item(Key={"experienceId": row["experienceId"], "userId": row["userId"]})
+            if "LastEvaluatedKey" not in page:
+                break
+            kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
 
 
 def _error(status_code, field, message):

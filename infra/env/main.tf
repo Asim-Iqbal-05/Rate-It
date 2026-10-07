@@ -52,8 +52,21 @@ module "media_service" {
 data "aws_iam_policy_document" "experience_service" {
   statement {
     sid       = "WriteExperiences"
-    actions   = ["dynamodb:PutItem"]
+    actions   = ["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:DeleteItem"]
     resources = [module.dynamodb.table_arn]
+  }
+
+  # Deleting a post also removes its likes and image files.
+  statement {
+    sid       = "DeletePostReactions"
+    actions   = ["dynamodb:Query", "dynamodb:BatchWriteItem"]
+    resources = [module.dynamodb.reactions_table_arn]
+  }
+
+  statement {
+    sid       = "DeletePostImages"
+    actions   = ["s3:DeleteObject"]
+    resources = ["${module.s3_uploads.bucket_arn}/*"]
   }
 
   statement {
@@ -69,10 +82,14 @@ module "experience_service" {
   function_name = "${var.project_name}-experience-service"
   source_dir    = "${path.module}/../../services/experience"
   handler       = "handler.lambda_handler"
+  # 30s is API Gateway's integration ceiling - room to delete a post with
+  # many likes (extension PRD §7.4).
+  timeout = 30
 
   environment_variables = {
-    TABLE_NAME     = module.dynamodb.table_name
-    UPLOADS_BUCKET = module.s3_uploads.bucket_name
+    TABLE_NAME      = module.dynamodb.table_name
+    UPLOADS_BUCKET  = module.s3_uploads.bucket_name
+    REACTIONS_TABLE = module.dynamodb.reactions_table_name
   }
 
   additional_policy_json = data.aws_iam_policy_document.experience_service.json
@@ -262,6 +279,10 @@ module "api_gateway" {
       invoke_arn    = module.media_service.alias_invoke_arn
     }
     "POST /api/experiences" = {
+      function_name = module.experience_service.function_name
+      invoke_arn    = module.experience_service.alias_invoke_arn
+    }
+    "DELETE /api/experiences/{experienceId}" = {
       function_name = module.experience_service.function_name
       invoke_arn    = module.experience_service.alias_invoke_arn
     }
