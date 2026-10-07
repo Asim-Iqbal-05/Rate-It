@@ -4,7 +4,7 @@
 **Audience:** Frontend/product engineers
 **Companion doc:** `rateit-infra-prd.md` (network, compute, deployment, security architecture)
 
-This document covers **what the app does and how the frontend talks to the backend.** It assumes the infra in the companion doc exists and treats it as a black box behind three API endpoints.
+This document covers **what the app does and how the frontend talks to the backend.** It assumes the infra in the companion doc exists and treats it as a black box behind its API endpoints (§4). Likes, post deletion, a "My posts" view and automated moderation were added after v1 — see the extension notes in §2–§4 and `rateit-extension-prd.md`.
 
 ---
 
@@ -22,6 +22,10 @@ This document covers **what the app does and how the frontend talks to the backe
 | **Image Upload** | Users upload 1–5 images directly from their device. Shown at full quality — no compression or resizing. |
 | **Submit Experience** | Users write a text description, give a title, and provide a 1–5 star rating alongside their uploaded image. |
 | **Global Feed** | Users view a chronological feed of all experiences posted by everyone on the platform. |
+| **Likes** | Users like and unlike any post; every card shows a like count and whether the viewer has liked it. |
+| **Delete own post** | Users can delete their own posts (the post, its photos and its likes). |
+| **My posts** | A view of the user's own posts, including any taken down by moderation (shown as "Removed by moderation"). |
+| **Automated moderation** | New posts' images are checked asynchronously; a flagged or non-JPEG/PNG post is taken out of the feed. |
 
 ---
 
@@ -35,8 +39,8 @@ This document covers **what the app does and how the frontend talks to the backe
 5. Token refresh handled silently before expiry; on refresh failure, bounce to login.
 
 ### 3.2 Upload + Submit an Experience
-1. User picks an image from their device.
-2. Frontend calls `GET /api/media/upload-url` → receives a presigned S3 POST policy.
+1. User picks an image from their device. Only JPEG and PNG are accepted; anything else is rejected in the picker with a clear message.
+2. Frontend calls `GET /api/media/upload-url?contentType=<the file's type>` → receives a presigned S3 POST policy.
 3. Frontend uploads the file **directly to S3** using that policy (never through the app's own backend).
 4. On successful S3 upload, frontend shows the image preview inline with the form (title, description, star rating).
 5. User fills in title/description/rating, hits submit.
@@ -48,15 +52,29 @@ This document covers **what the app does and how the frontend talks to the backe
 1. On load, frontend calls `GET /api/feed`.
 2. Renders posts newest-first: image, title, description, rating, author, timestamp.
 3. No filtering, sorting, search, pagination controls beyond "load more" if the API returns a pagination token (see §4.3) — keep it simple for v1.
+4. A toggle switches between **All posts** and **My posts** (`GET /api/feed?author=me`). Switching starts a fresh list.
+
+### 3.4 Like / unlike
+1. Tapping the heart updates the heart and count **instantly** (optimistic).
+2. After about 500 ms with no further taps, the frontend sends only the **final** state: `PUT` (liked) or `DELETE` (unliked) on `/api/experiences/{id}/like`. A burst of taps is one request; tapping an even number of times sends none.
+3. On failure the heart and count revert and a brief message is shown (a `429` shows the generic "slow down" text). On `404` (the post was deleted or taken down) the card is removed.
+4. The next real feed fetch reconciles the displayed state, except for a tap the server has not yet heard about.
+
+### 3.5 Delete your own post
+1. The Delete button appears only on cards where `userId` equals the signed-in user's `sub`.
+2. It asks for confirmation inline ("Delete this post? Cancel / Delete"), then calls `DELETE /api/experiences/{id}`.
+3. On `204` (or `404`, already gone) the card is removed. On `403` an error is shown.
 
 ---
 
 ## 4. API Contract
 
-These are the three endpoints the frontend integrates against. All require `Authorization: Bearer <JWT>` except where noted; a missing/invalid token returns `401` before any application code runs.
+These are the endpoints the frontend integrates against. All require `Authorization: Bearer <JWT>` except where noted; a missing/invalid token returns `401` before any application code runs.
 
 ### 4.1 `GET /api/media/upload-url`
 Issues a short-lived, scoped S3 presigned POST policy.
+
+**Query:** `contentType` — `image/jpeg` (default) or `image/png`. Any other value returns `400`. The key's extension follows the type (`.jpg` / `.png`), and the policy requires that exact `Content-Type`, so the file must be posted with it (it is returned in `fields`).
 
 **Response `200`:**
 ```json
@@ -125,7 +143,10 @@ Returns the chronological global feed.
       "description": "...",
       "rating": 4,
       "imageUrls": ["https://.../image1.jpg", "https://.../image2.jpg"],
-      "createdAt": "2026-08-21T10:15:00Z"
+      "createdAt": "2026-08-21T10:15:00Z",
+      "likeCount": 12,
+      "likedByMe": true,
+      "removed": false
     }
   ],
   "nextPageToken": "opaque-token-or-null"
@@ -133,8 +154,30 @@ Returns the chronological global feed.
 ```
 - Newest first.
 - If `nextPageToken` is present, a "load more" action can re-call with it; if the backend doesn't yet support pagination params, treat the first page as the whole feed for v1 and add this later — don't build UI for a capability the backend doesn't expose yet.
-- This endpoint may be served from a CloudFront cache with a short TTL (10–30s) — the frontend doesn't need to know or care, but don't assume every call reflects the literal instant of the request.
-- **`imageUrls` is an array (1–5 entries)** — the feed card needs a way to browse multiple photos per post (e.g. a small carousel or dot-indicator gallery), not just render the first one. Not yet built as of this note; flagged here so Step 2 doesn't get built against stale single-image assumptions.
+- **Not cached anywhere** — the response is per-caller (`likedByMe`) and authenticated on every request, so a post you just created or liked shows on your next load.
+- **`imageUrls` is an array (1–5 entries)**; the feed card browses them with a carousel (previous/next arrows and dot indicators).
+- **Query `author=me`** returns only the caller's posts (newest first, same pagination). Any other value returns `400`. Page tokens are specific to a view; a token from the other view is ignored.
+- `likeCount` and `likedByMe` are on every item. `removed` is `true` only for the caller's own taken-down posts in the `author=me` view (with `imageUrls: []`); the global feed never contains removed posts.
+
+### 4.4 `PUT` / `DELETE /api/experiences/{experienceId}/like`
+Sets the caller's like on a post. Both are **idempotent**, take no request body and return no response body.
+
+| Status | Meaning |
+|---|---|
+| `204` | Liked / unliked (or already in that state). |
+| `404` | (`PUT` only) the post does not exist or has been removed. |
+| `401`, `429` | As elsewhere. |
+
+The caller is always the token's `sub`; there is no user field in the request.
+
+### 4.5 `DELETE /api/experiences/{experienceId}`
+Deletes the caller's own post, its photos and its likes.
+
+| Status | Meaning |
+|---|---|
+| `204` | Deleted. |
+| `403` | The post belongs to someone else. |
+| `404` | The post does not exist. |
 
 ---
 
@@ -151,6 +194,9 @@ Mirrors the backend `Experiences` table — the frontend should treat these as r
 | `rating` | number | Client-provided, 1–5. |
 | `imageUrls` | string[] | Server-resolved, 1–5 entries; frontend renders each as an `<img>` src. |
 | `createdAt` | string (ISO) | Server-generated, drives sort order. |
+| `likeCount` | number | Server-computed from the `Reactions` table; 0 when nobody has liked it. |
+| `likedByMe` | boolean | Whether the signed-in user has liked it. |
+| `removed` | boolean | `true` only for the caller's own taken-down posts in "My posts". |
 
 ---
 
@@ -165,10 +211,10 @@ Mirrors the backend `Experiences` table — the frontend should treat these as r
 
 ## 7. Out of Scope (v1)
 
-- Editing or deleting posts.
-- Content moderation (automated or manual).
+- Editing posts. *(Deleting your own posts is now supported — §3.5.)*
+- Manual moderation tooling. *(Automated image moderation is now built — see `rateit-infra-prd.md` §13.2; there is no appeals flow or moderator UI.)*
 - User profiles or avatars.
-- Comments, likes, or upvotes.
+- Comments or upvotes. *(Likes are now supported — §3.4.)*
 - Complex filtering (sort by rating, keyword search).
 - Image compression/resizing.
 - Per-user personalized feeds (relevant if you ever revisit the CloudFront caching strategy in the infra PRD).
@@ -189,7 +235,7 @@ Build the feed screen against `GET /api/feed` first, even with no way to post ye
 Image picker → `GET /api/media/upload-url` → direct S3 POST → preview. Build and test this in isolation before wiring it into the submit form — the direct-to-S3 step is the one most likely to need debugging (CORS on the bucket, form field mismatches).
 
 **Step 4 — Submit form**
-Title/description/rating form → `POST /api/experiences`, using the `imageKey` from Step 3. Wire success to route back to the feed (Step 2) and prepend the new post optimistically.
+Title/description/rating form → `POST /api/experiences`, using the `imageKeys` from Step 3. Wire success to route back to the feed (Step 2) and prepend the new post optimistically.
 
 **Step 5 — Error/edge states**
 401 mid-session, 429 rate-limit messaging, failed upload vs. failed submit distinction (§6), large-file warning.
@@ -198,3 +244,14 @@ Title/description/rating form → `POST /api/experiences`, using the `imageKey` 
 Loading states, empty feed state, responsive layout — once the functional path is fully working end-to-end.
 
 Build in this order because each step is independently testable against a real backend without needing the next step to exist — you're never blocked waiting on a later piece to validate an earlier one.
+
+**Extension steps (built after v1)**
+
+**Step 7 — Likes**
+Heart + count on every card, optimistic with a ~500 ms debounce that sends only the final state (§3.4).
+
+**Step 8 — Delete and My posts**
+Owner-only Delete with inline confirm, the All/My posts toggle, and the "Removed by moderation" state (§3.3, §3.5).
+
+**Step 9 — Upload restriction**
+JPEG/PNG-only picker, `contentType` on the upload-URL request, clear rejection of other formats (§3.2).
