@@ -14,7 +14,7 @@ resource "aws_dynamodb_table" "experiences" {
     type = "S"
   }
 
-  # GSI attributes. `Type` is a constant "POST" on every item today -
+  # GSI attributes. `Type` is a monthly "POST#YYYY-MM" bucket on every item -
   # this is the documented v1 hot-partition tradeoff (§7.1): all feed
   # reads and writes hit one logical GSI partition, mitigated by the
   # CloudFront cache on GET /api/feed (added in Phase 7). Migration
@@ -30,11 +30,59 @@ resource "aws_dynamodb_table" "experiences" {
     type = "S"
   }
 
+  # Author lookups for "My posts" (extension PRD §5.2). Keeps taken-down
+  # posts reachable by their author - they have no `Type`, so they are
+  # absent from the feed GSI above but still carry `userId`.
+  attribute {
+    name = "userId"
+    type = "S"
+  }
+
   global_secondary_index {
     name            = "TypeCreatedAtIndex"
     hash_key        = "Type"
     range_key       = "CreatedAt"
     projection_type = "ALL" # feed reads need the full item, not just keys
+  }
+
+  global_secondary_index {
+    name            = "userId-CreatedAt-index"
+    hash_key        = "userId"
+    range_key       = "CreatedAt"
+    projection_type = "ALL"
+  }
+
+  # Moderation Service trigger (extension PRD §5.2/§7.2). Only the
+  # new image is needed - it filters on INSERT.
+  stream_enabled   = true
+  stream_view_type = "NEW_IMAGE"
+
+  point_in_time_recovery {
+    enabled = true
+  }
+}
+
+# Likes and like counts live here and ONLY here (extension PRD §4,
+# invariant 2) so a like never writes to the Experiences table or its
+# feed GSI. Two item kinds share the table: one row per like
+# (userId = the liker's Cognito sub) and one count row per post
+# (userId = the literal "COUNT" - a Cognito sub is a UUID, so the two
+# can never collide). A missing count row means zero likes.
+resource "aws_dynamodb_table" "reactions" {
+  name         = "${var.project_name}-reactions"
+  billing_mode = "PAY_PER_REQUEST"
+
+  hash_key  = "experienceId"
+  range_key = "userId"
+
+  attribute {
+    name = "experienceId"
+    type = "S"
+  }
+
+  attribute {
+    name = "userId"
+    type = "S"
   }
 
   point_in_time_recovery {

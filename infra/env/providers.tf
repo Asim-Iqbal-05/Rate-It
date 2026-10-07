@@ -11,6 +11,13 @@ terraform {
 
 provider "aws" {
   region = var.aws_region
+
+  default_tags {
+    tags = {
+      owner       = "Asim"
+      environment = "project"
+    }
+  }
 }
 
 # CloudFront requires ACM certs to be issued in us-east-1, regardless
@@ -18,4 +25,11 @@ provider "aws" {
 provider "aws" {
   alias  = "us_east_1"
   region = "us-east-1"
+
+  default_tags {
+    tags = {
+      owner       = "Asim"
+      environment = "project"
+    }
+  }
 }
