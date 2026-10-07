@@ -113,6 +113,136 @@ module "reactions_service" {
   additional_policy_json = data.aws_iam_policy_document.reactions_service.json
 }
 
+# --- Extension: Moderation Service ----------------------------------------
+
+# Holds posts that couldn't be moderated (Rekognition down, unreadable
+# image, ...) until someone works the queue. Also the stream mapping's
+# on-failure destination. Extension PRD §7.3.
+locals {
+  moderation_queue_name = "${var.project_name}-moderation-dlq"
+  moderation_queue_arn  = "arn:aws:sqs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:${local.moderation_queue_name}"
+}
+
+resource "aws_sqs_queue" "moderation_dlq" {
+  name                       = local.moderation_queue_name
+  message_retention_seconds  = 1209600 # 14 days
+  visibility_timeout_seconds = 360     # 6x the function timeout
+  sqs_managed_sse_enabled    = true
+}
+
+data "aws_iam_policy_document" "moderation_service" {
+  statement {
+    sid       = "ReadExperiencesStream"
+    actions   = ["dynamodb:DescribeStream", "dynamodb:GetRecords", "dynamodb:GetShardIterator"]
+    resources = [module.dynamodb.stream_arn]
+  }
+
+  # ListStreams can't be scoped to a stream ARN.
+  statement {
+    sid       = "ListStreams"
+    actions   = ["dynamodb:ListStreams"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "ReadAndTakeDownPosts"
+    actions   = ["dynamodb:GetItem", "dynamodb:UpdateItem"]
+    resources = [module.dynamodb.table_arn]
+  }
+
+  # Rekognition reads the image with this role's own S3 permission, so
+  # this one grant covers both the magic-byte check and DetectModerationLabels.
+  statement {
+    sid       = "ReadUploads"
+    actions   = ["s3:GetObject"]
+    resources = ["${module.s3_uploads.bucket_arn}/*"]
+  }
+
+  statement {
+    sid       = "Moderate"
+    actions   = ["rekognition:DetectModerationLabels"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid = "ModerationQueue"
+    actions = [
+      "sqs:SendMessage",
+      "sqs:ReceiveMessage",
+      "sqs:DeleteMessage",
+      "sqs:GetQueueAttributes",
+    ]
+    # Built from the name rather than aws_sqs_queue.arn: the lambda-function
+    # module branches on whether this policy exists, which Terraform can't
+    # do with a value only known after apply.
+    resources = [local.moderation_queue_arn]
+  }
+}
+
+module "moderation_service" {
+  source = "../modules/lambda-function"
+
+  function_name = "${var.project_name}-moderation-service"
+  source_dir    = "${path.module}/../../services/moderation"
+  handler       = "handler.lambda_handler"
+  memory_size   = 512
+  timeout       = 60
+
+  environment_variables = {
+    UPLOADS_BUCKET     = module.s3_uploads.bucket_name
+    EXPERIENCES_TABLE  = module.dynamodb.table_name
+    QUEUE_URL          = aws_sqs_queue.moderation_dlq.url
+    MIN_CONFIDENCE     = tostring(var.moderation_min_confidence)
+    BLOCKED_CATEGORIES = join(",", var.moderation_blocked_categories)
+  }
+
+  additional_policy_json = data.aws_iam_policy_document.moderation_service.json
+}
+
+# New posts only: INSERT, never the takedown (MODIFY) or a delete
+# (REMOVE). Targets the alias, not $LATEST. depends_on the whole module
+# so the role's stream permissions exist before Lambda validates them.
+resource "aws_lambda_event_source_mapping" "moderation_stream" {
+  event_source_arn  = module.dynamodb.stream_arn
+  function_name     = module.moderation_service.alias_arn
+  starting_position = "LATEST"
+
+  batch_size                     = 10
+  maximum_retry_attempts         = 3 # the default retries until the record expires and blocks the shard
+  bisect_batch_on_function_error = true
+  maximum_record_age_in_seconds  = 3600
+  function_response_types        = ["ReportBatchItemFailures"]
+
+  filter_criteria {
+    filter {
+      pattern = jsonencode({ eventName = ["INSERT"] })
+    }
+  }
+
+  destination_config {
+    on_failure {
+      destination_arn = aws_sqs_queue.moderation_dlq.arn
+    }
+  }
+
+  depends_on = [module.moderation_service]
+}
+
+# Redrive: created DISABLED on purpose - a post that can never succeed
+# would otherwise loop forever. An operator enables it to drain the
+# queue after fixing the cause (README runbook), then disables it
+# again; a later apply resetting it to disabled is the intended
+# behaviour, so `enabled` is deliberately not in ignore_changes.
+resource "aws_lambda_event_source_mapping" "moderation_redrive" {
+  event_source_arn        = aws_sqs_queue.moderation_dlq.arn
+  function_name           = module.moderation_service.alias_arn
+  enabled                 = false
+  batch_size              = 5
+  function_response_types = ["ReportBatchItemFailures"]
+
+  depends_on = [module.moderation_service]
+}
+
 # --- Phase 4: API Gateway + write path -----------------------------------
 
 module "api_gateway" {
@@ -350,6 +480,8 @@ module "observability" {
   media_service_function_name      = module.media_service.function_name
   experience_service_function_name = module.experience_service.function_name
   reactions_service_function_name  = module.reactions_service.function_name
+  moderation_service_function_name = module.moderation_service.function_name
+  moderation_queue_name            = aws_sqs_queue.moderation_dlq.name
 
   ecs_cluster_name              = module.ecs_feed_service.cluster_name
   ecs_service_name              = module.ecs_feed_service.service_name

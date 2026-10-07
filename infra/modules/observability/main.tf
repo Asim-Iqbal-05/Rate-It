@@ -14,6 +14,7 @@ resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
     media_service      = var.media_service_function_name
     experience_service = var.experience_service_function_name
     reactions_service  = var.reactions_service_function_name
+    moderation_service = var.moderation_service_function_name
   }
 
   alarm_name          = "${var.project_name}-${replace(each.key, "_", "-")}-errors"
@@ -171,6 +172,48 @@ resource "aws_cloudwatch_metric_alarm" "experiences_index_throttles" {
         GlobalSecondaryIndexName = each.value
       }
     }
+  }
+}
+
+# --- Moderation: queue backlog and stream lag (extension PRD §9) --------
+
+# Any message at all means a post couldn't be moderated and is waiting
+# for a person (the system fails open, so it stays visible meanwhile).
+resource "aws_cloudwatch_metric_alarm" "moderation_queue_not_empty" {
+  alarm_name          = "${var.project_name}-moderation-queue-not-empty"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  namespace           = "AWS/SQS"
+  period              = 300
+  statistic           = "Maximum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Posts are waiting in the moderation dead-letter queue - see the redrive runbook in the README."
+  alarm_actions       = [var.alarm_sns_topic_arn]
+  ok_actions          = [var.alarm_sns_topic_arn]
+
+  dimensions = {
+    QueueName = var.moderation_queue_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "moderation_iterator_age" {
+  alarm_name          = "${var.project_name}-moderation-falling-behind"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "IteratorAge"
+  namespace           = "AWS/Lambda"
+  period              = 300
+  statistic           = "Maximum"
+  threshold           = var.moderation_iterator_age_threshold_ms
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Moderation is more than 5 minutes behind the Experiences stream."
+  alarm_actions       = [var.alarm_sns_topic_arn]
+  ok_actions          = [var.alarm_sns_topic_arn]
+
+  dimensions = {
+    FunctionName = var.moderation_service_function_name
   }
 }
 

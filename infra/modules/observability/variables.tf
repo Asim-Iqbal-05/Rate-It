@@ -27,6 +27,20 @@ variable "reactions_service_function_name" {
   type = string
 }
 
+variable "moderation_service_function_name" {
+  type = string
+}
+
+variable "moderation_queue_name" {
+  type = string
+}
+
+variable "moderation_iterator_age_threshold_ms" {
+  description = "Alarm if the moderation stream mapping falls this far behind (default 5 minutes)."
+  type        = number
+  default     = 300000
+}
+
 variable "ecs_cluster_name" {
   type = string
 }

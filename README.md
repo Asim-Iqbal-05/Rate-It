@@ -22,3 +22,26 @@ Infra and frontend interleave — see each PRD's own build-sequence section (`in
 5. Infra Phase 6+: CloudFront/edge delivery, WAF hardening, CI/CD, observability.
 
 Terraform is applied manually by the project owner — plans are prepared and reviewed here, applies happen with explicit go-ahead each time.
+
+## Operations: moderation queue
+
+New posts are checked asynchronously by the Moderation Service (Lambda, triggered by the `rateit-experiences` DynamoDB stream). It **fails open**: if a post can't be checked (Rekognition unavailable, unreadable image, ...) it stays visible and a message goes to the `rateit-moderation-dlq` SQS queue. Messages in that queue mean someone needs to look.
+
+When the "moderation queue not empty" alarm fires:
+
+1. Read the Moderation Lambda's error logs (`/aws/lambda/rateit-moderation-service`) and fix the cause if it is on our side. Each queued message has a `reason`; `retryable: false` means that post can never be moderated automatically.
+2. Enable the redrive mapping (it is disabled by default so a post that can never succeed doesn't loop forever):
+   ```
+   UUID=$(aws lambda list-event-source-mappings --function-name rateit-moderation-service:live \
+     --query "EventSourceMappings[?contains(EventSourceArn, 'sqs')].UUID" --output text)
+   aws lambda update-event-source-mapping --uuid $UUID --enabled
+   ```
+3. Watch the queue drain (`ApproximateNumberOfMessagesVisible`).
+4. Disable it again:
+   ```
+   aws lambda update-event-source-mapping --uuid $UUID --no-enabled
+   ```
+
+A later `terraform apply` resetting the mapping to disabled is the intended behaviour. Messages without an `experienceId` are Lambda's own stream-failure pointers: the redrive logs their full body at error level and drops them, so read those logs for manual follow-up.
+
+Unit tests for the Moderation Service (AWS stubbed): `python3 -m unittest discover -s tests/moderation` from the repo root (needs `boto3`).

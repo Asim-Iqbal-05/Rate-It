@@ -47,3 +47,15 @@ variable "waf_rate_limit" {
   type        = number
   default     = 300
 }
+
+variable "moderation_min_confidence" {
+  description = "Minimum Rekognition confidence (0-100) for a moderation label to count."
+  type        = number
+  default     = 80
+}
+
+variable "moderation_blocked_categories" {
+  description = "Top-level Rekognition moderation categories that take a post down. Names must match the published taxonomy exactly."
+  type        = list(string)
+  default     = ["Explicit", "Violence", "Visually Disturbing", "Hate Symbols"]
+}
