@@ -2,6 +2,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
 export class UnauthorizedError extends Error {}
 export class RateLimitedError extends Error {}
+export class NotFoundError extends Error {}
 
 /**
  * Fetch wrapper for the RateIt API. Attaches the bearer token and
@@ -120,6 +121,10 @@ export interface FeedItem {
   rating: number;
   imageUrls: string[];
   createdAt: string;
+  likeCount: number;
+  likedByMe: boolean;
+  /** True only for the caller's own taken-down posts, in the "My posts" view. */
+  removed: boolean;
 }
 
 export interface FeedResponse {
@@ -129,14 +134,47 @@ export interface FeedResponse {
 
 export async function getFeed(
   getIdToken: () => Promise<string | null>,
-  pageToken?: string,
+  options: { pageToken?: string; author?: "me" } = {},
 ): Promise<FeedResponse> {
-  const query = pageToken ? `?pageToken=${encodeURIComponent(pageToken)}` : "";
+  const params = new URLSearchParams();
+  if (options.pageToken) params.set("pageToken", options.pageToken);
+  if (options.author) params.set("author", options.author);
+  const query = params.size > 0 ? `?${params}` : "";
   const res = await apiFetch(`/api/feed${query}`, getIdToken, { method: "GET" });
   if (!res.ok) {
     throw new Error("Could not load the feed");
   }
   return res.json();
+}
+
+/**
+ * Sets the caller's like on a post to the given state. Idempotent on the
+ * server, so it is safe to send the final state after a burst of toggles.
+ * A 404 means the post no longer exists (deleted or taken down).
+ */
+export async function setLike(
+  getIdToken: () => Promise<string | null>,
+  experienceId: string,
+  liked: boolean,
+): Promise<void> {
+  const res = await apiFetch(`/api/experiences/${experienceId}/like`, getIdToken, {
+    method: liked ? "PUT" : "DELETE",
+  });
+  if (res.status === 404) throw new NotFoundError("Post not found");
+  if (!res.ok) throw new Error("Could not update your like");
+}
+
+export async function deleteExperience(
+  getIdToken: () => Promise<string | null>,
+  experienceId: string,
+): Promise<void> {
+  const res = await apiFetch(`/api/experiences/${experienceId}`, getIdToken, {
+    method: "DELETE",
+  });
+  // Already gone is the outcome the user wanted - callers treat it like success.
+  if (res.status === 404) throw new NotFoundError("Post not found");
+  if (res.status === 403) throw new Error("You can only delete your own posts.");
+  if (!res.ok) throw new Error("Could not delete that post");
 }
 
 export interface CreateExperienceInput {

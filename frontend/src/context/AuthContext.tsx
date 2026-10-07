@@ -20,6 +20,8 @@ type AuthStatus = "loading" | "authenticated" | "unauthenticated";
 interface AuthContextValue {
   status: AuthStatus;
   username: string | null;
+  /** Cognito `sub` - what a post's `userId` is compared against to know "my" posts. */
+  userId: string | null;
   signUp: (username: string, email: string, password: string) => Promise<void>;
   confirmSignUp: (username: string, code: string) => Promise<void>;
   signIn: (username: string, password: string) => Promise<void>;
@@ -33,14 +35,17 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [username, setUsername] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
 
   const refreshFromSession = async () => {
     try {
       const user = await getCurrentUser();
       setUsername(user.username);
+      setUserId(user.userId);
       setStatus("authenticated");
     } catch {
       setUsername(null);
+      setUserId(null);
       setStatus("unauthenticated");
     }
   };
@@ -54,6 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const unsubscribe = Hub.listen("auth", ({ payload }) => {
       if (payload.event === "signedOut" || payload.event === "tokenRefresh_failure") {
         setUsername(null);
+        setUserId(null);
         setStatus("unauthenticated");
       }
     });
@@ -81,6 +87,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = async () => {
     await amplifySignOut();
     setUsername(null);
+    setUserId(null);
     setStatus("unauthenticated");
   };
 
@@ -96,7 +103,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ status, username, signUp, confirmSignUp, signIn, signOut, getIdToken }}
+      value={{ status, username, userId, signUp, confirmSignUp, signIn, signOut, getIdToken }}
     >
       {children}
     </AuthContext.Provider>
