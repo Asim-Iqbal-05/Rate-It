@@ -112,3 +112,29 @@ variable "waf_blocked_request_threshold" {
   type        = number
   default     = 100
 }
+
+variable "counter_service_function_name" {
+  type = string
+}
+
+variable "reconciliation_service_function_name" {
+  type = string
+}
+
+variable "like_counter_queue_name" {
+  type = string
+}
+
+variable "dynamodb_likes_table_name" {
+  type = string
+}
+
+variable "dynamodb_like_counters_table_name" {
+  type = string
+}
+
+variable "counter_iterator_age_threshold_ms" {
+  description = "Alarm if the like counter falls this far behind the Likes stream (default 60 seconds)."
+  type        = number
+  default     = 60000
+}

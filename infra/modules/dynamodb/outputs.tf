@@ -25,3 +25,23 @@ output "reactions_table_name" {
 output "reactions_table_arn" {
   value = aws_dynamodb_table.reactions.arn
 }
+
+output "likes_table_name" {
+  value = aws_dynamodb_table.likes.name
+}
+
+output "likes_table_arn" {
+  value = aws_dynamodb_table.likes.arn
+}
+
+output "likes_stream_arn" {
+  value = aws_dynamodb_table.likes.stream_arn
+}
+
+output "like_counters_table_name" {
+  value = aws_dynamodb_table.like_counters.name
+}
+
+output "like_counters_table_arn" {
+  value = aws_dynamodb_table.like_counters.arn
+}

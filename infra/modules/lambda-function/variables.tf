@@ -51,3 +51,9 @@ variable "log_retention_days" {
   type    = number
   default = 14
 }
+
+variable "attach_additional_policy" {
+  description = "Attach additional_policy_json. A plain flag rather than a null check on the policy itself: a policy built from resources that don't exist yet is unknown at plan time, and Terraform can't size a `count` from an unknown value. Set false for a function that needs nothing beyond CloudWatch Logs."
+  type        = bool
+  default     = true
+}

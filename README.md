@@ -45,3 +45,23 @@ When the "moderation queue not empty" alarm fires:
 A later `terraform apply` resetting the mapping to disabled is the intended behaviour. Messages without an `experienceId` are Lambda's own stream-failure pointers: the redrive logs their full body at error level and drops them, so read those logs for manual follow-up.
 
 Unit tests for the Moderation Service (AWS stubbed): `python3 -m unittest discover -s tests/moderation` from the repo root (needs `boto3`).
+
+## Operations: like counts
+
+A like is one write to the `rateit-likes` table (the source of truth). The count shown on a post is **derived**: the Counter Lambda reads the table's stream in batches and updates `rateit-like-counters`, so a count can lag a like by a couple of seconds (the feed API covers this for the liker). Design and trade-offs: `docs/rateit-likes-redesign-prd.md`.
+
+Things that are deliberate, not bugs:
+- Deleting a post removes its counter but leaves its like rows behind (the table can't be queried by post). They are never read.
+- The Counter Lambda's event source mapping has batch bisecting and partial-batch responses **off**. Its duplicate protection needs a retried batch to be identical to the original; turning either on would allow double counting.
+- There is no "who liked this post" query and no index on `experienceId` (it would recreate the hot partition this design removed).
+
+**"Like counter queue not empty" alarm** (`rateit-like-counter-dlq`): a stream batch failed permanently, so some counts may be off. The messages only hold stream metadata, not the likes themselves.
+1. Read `/aws/lambda/rateit-counter-service` and fix the cause.
+2. Repair by running the Reconciliation Lambda with repair on:
+   ```
+   aws lambda invoke --function-name rateit-reconciliation-service:live \
+     --cli-binary-format raw-in-base64-out --payload '{"repair": true}' /dev/stdout
+   ```
+3. Run it again without the payload (detect mode) and confirm `"drift": 0`.
+
+**"Like count drift" alarm**: the weekly reconciliation (Saturday 21:00 UTC, detect only) found posts whose count differs from their like rows; each one is logged in `/aws/lambda/rateit-reconciliation-service`. Same repair as above. Unit tests: `python3 -m unittest discover -s tests/counter` and `-s tests/reconciliation`.

@@ -262,6 +262,192 @@ resource "aws_lambda_event_source_mapping" "moderation_redrive" {
   depends_on = [module.moderation_service]
 }
 
+# --- Likes redesign: Counter + Reconciliation (docs/rateit-likes-redesign-prd.md) ---
+
+locals {
+  like_counter_queue_name = "${var.project_name}-like-counter-dlq"
+  like_counter_queue_arn  = "arn:aws:sqs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:${local.like_counter_queue_name}"
+}
+
+# Failed counter batches land here. The messages only carry stream metadata,
+# not the likes themselves: the response is to fix the cause, then run the
+# Reconciliation Lambda with {"repair": true} (README runbook).
+resource "aws_sqs_queue" "like_counter_dlq" {
+  name                      = local.like_counter_queue_name
+  message_retention_seconds = 1209600 # 14 days
+  sqs_managed_sse_enabled   = true
+}
+
+data "aws_iam_policy_document" "counter_service" {
+  statement {
+    sid       = "ReadLikesStream"
+    actions   = ["dynamodb:DescribeStream", "dynamodb:GetRecords", "dynamodb:GetShardIterator"]
+    resources = [module.dynamodb.likes_stream_arn]
+  }
+
+  # ListStreams can't be scoped to a stream ARN.
+  statement {
+    sid       = "ListStreams"
+    actions   = ["dynamodb:ListStreams"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "WriteCounters"
+    actions   = ["dynamodb:PutItem", "dynamodb:UpdateItem"]
+    resources = [module.dynamodb.like_counters_table_arn]
+  }
+
+  statement {
+    sid       = "FailedBatchQueue"
+    actions   = ["sqs:SendMessage"]
+    resources = [local.like_counter_queue_arn] # built from the name: see moderation queue note
+  }
+}
+
+module "counter_service" {
+  source = "../modules/lambda-function"
+
+  function_name    = "${var.project_name}-counter-service"
+  manage_log_group = true
+  source_dir       = "${path.module}/../../services/counter"
+  handler          = "handler.lambda_handler"
+  memory_size      = 256
+  timeout          = 30
+
+  environment_variables = {
+    COUNTERS_TABLE = module.dynamodb.like_counters_table_name
+  }
+
+  additional_policy_json = data.aws_iam_policy_document.counter_service.json
+}
+
+# Bisecting and partial-batch responses are OFF on purpose: the Counter's
+# duplicate protection needs a retried batch to be identical to the original,
+# and both features change a retried batch's boundaries. Do not "fix" this.
+resource "aws_lambda_event_source_mapping" "counter_stream" {
+  event_source_arn  = module.dynamodb.likes_stream_arn
+  function_name     = module.counter_service.alias_arn
+  starting_position = "LATEST"
+
+  batch_size                         = 500
+  maximum_batching_window_in_seconds = 2
+  parallelization_factor             = 1
+  maximum_retry_attempts             = 10
+  maximum_record_age_in_seconds      = 21600 # 6 hours
+  bisect_batch_on_function_error     = false
+
+  filter_criteria {
+    filter {
+      pattern = jsonencode({ eventName = ["INSERT", "REMOVE"] })
+    }
+  }
+
+  destination_config {
+    on_failure {
+      destination_arn = aws_sqs_queue.like_counter_dlq.arn
+    }
+  }
+
+  depends_on = [module.counter_service]
+}
+
+data "aws_iam_policy_document" "reconciliation_service" {
+  statement {
+    sid       = "ReadLikes"
+    actions   = ["dynamodb:Scan"]
+    resources = [module.dynamodb.likes_table_arn]
+  }
+
+  statement {
+    sid       = "ReadAndRepairCounters"
+    actions   = ["dynamodb:Scan", "dynamodb:UpdateItem"]
+    resources = [module.dynamodb.like_counters_table_arn]
+  }
+
+  # Only to tell whether a post still exists - deleted posts are ignored.
+  statement {
+    sid       = "CheckPostsExist"
+    actions   = ["dynamodb:BatchGetItem"]
+    resources = [module.dynamodb.table_arn]
+  }
+
+  statement {
+    sid       = "PublishDriftMetric"
+    actions   = ["cloudwatch:PutMetricData"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "cloudwatch:namespace"
+      values   = ["RateIt/Likes"]
+    }
+  }
+}
+
+module "reconciliation_service" {
+  source = "../modules/lambda-function"
+
+  function_name    = "${var.project_name}-reconciliation-service"
+  manage_log_group = true
+  source_dir       = "${path.module}/../../services/reconciliation"
+  handler          = "handler.lambda_handler"
+  memory_size      = 512
+  timeout          = 300
+
+  environment_variables = {
+    LIKES_TABLE       = module.dynamodb.likes_table_name
+    COUNTERS_TABLE    = module.dynamodb.like_counters_table_name
+    EXPERIENCES_TABLE = module.dynamodb.table_name
+  }
+
+  additional_policy_json = data.aws_iam_policy_document.reconciliation_service.json
+}
+
+# Weekly check, at a quiet hour (21:00 UTC Saturday = 02:00 Sunday in
+# Pakistan). Detect mode only - repair is always a deliberate manual run.
+data "aws_iam_policy_document" "scheduler_assume" {
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["scheduler.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "reconciliation_scheduler" {
+  name               = "${var.project_name}-reconciliation-scheduler-role"
+  assume_role_policy = data.aws_iam_policy_document.scheduler_assume.json
+}
+
+resource "aws_iam_role_policy" "reconciliation_scheduler" {
+  name = "${var.project_name}-reconciliation-scheduler-policy"
+  role = aws_iam_role.reconciliation_scheduler.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "lambda:InvokeFunction"
+      Resource = [module.reconciliation_service.function_arn, "${module.reconciliation_service.function_arn}:*"]
+    }]
+  })
+}
+
+resource "aws_scheduler_schedule" "reconciliation" {
+  name                = "${var.project_name}-like-reconciliation-weekly"
+  schedule_expression = "cron(0 21 ? * SAT *)"
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+
+  target {
+    arn      = module.reconciliation_service.alias_arn
+    role_arn = aws_iam_role.reconciliation_scheduler.arn
+    input    = jsonencode({})
+  }
+}
+
 # --- Phase 4: API Gateway + write path -----------------------------------
 
 module "api_gateway" {
@@ -505,6 +691,12 @@ module "observability" {
   reactions_service_function_name  = module.reactions_service.function_name
   moderation_service_function_name = module.moderation_service.function_name
   moderation_queue_name            = aws_sqs_queue.moderation_dlq.name
+
+  counter_service_function_name        = module.counter_service.function_name
+  reconciliation_service_function_name = module.reconciliation_service.function_name
+  like_counter_queue_name              = aws_sqs_queue.like_counter_dlq.name
+  dynamodb_likes_table_name            = module.dynamodb.likes_table_name
+  dynamodb_like_counters_table_name    = module.dynamodb.like_counters_table_name
 
   ecs_cluster_name              = module.ecs_feed_service.cluster_name
   ecs_service_name              = module.ecs_feed_service.service_name

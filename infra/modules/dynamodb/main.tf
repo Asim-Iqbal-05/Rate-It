@@ -89,3 +89,61 @@ resource "aws_dynamodb_table" "reactions" {
     enabled = true
   }
 }
+
+# --- Likes redesign (docs/rateit-likes-redesign-prd.md) ---------------------
+# Likes (source of truth) and LikeCounters (derived counts) replace the
+# Reactions table above, which is removed in a later, separate apply once
+# the data has been migrated and verified.
+
+# One row per like. Keyed by user FIRST so writes spread evenly across
+# partitions (no single user likes fast enough to matter). The cost is that
+# this table cannot list the likes of a post - nothing in the product needs
+# that. Deliberately NO index on experienceId: it would recreate the hot
+# partition this design removes.
+resource "aws_dynamodb_table" "likes" {
+  name         = "${var.project_name}-likes"
+  billing_mode = "PAY_PER_REQUEST"
+
+  hash_key  = "userId"
+  range_key = "experienceId"
+
+  attribute {
+    name = "userId"
+    type = "S"
+  }
+
+  attribute {
+    name = "experienceId"
+    type = "S"
+  }
+
+  # Drives the Counter Lambda. Keys are enough: INSERT/REMOVE plus the
+  # key (which carries the post ID) is all it needs.
+  stream_enabled   = true
+  stream_view_type = "KEYS_ONLY"
+
+  point_in_time_recovery {
+    enabled = true
+  }
+}
+
+# Derived counts, one row per post, plus short-lived idempotency markers
+# the Counter Lambda writes in the same transaction as the count updates
+# (so a re-delivered stream batch is detected and applied only once).
+# A missing counter means zero likes.
+resource "aws_dynamodb_table" "like_counters" {
+  name         = "${var.project_name}-like-counters"
+  billing_mode = "PAY_PER_REQUEST"
+
+  hash_key = "pk"
+
+  attribute {
+    name = "pk"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "expiresAt"
+    enabled        = true
+  }
+}

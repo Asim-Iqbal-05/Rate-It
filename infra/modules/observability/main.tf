@@ -15,6 +15,8 @@ resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
     experience_service = var.experience_service_function_name
     reactions_service  = var.reactions_service_function_name
     moderation_service = var.moderation_service_function_name
+    counter_service    = var.counter_service_function_name
+    reconciliation     = var.reconciliation_service_function_name
   }
 
   alarm_name          = "${var.project_name}-${replace(each.key, "_", "-")}-errors"
@@ -214,6 +216,89 @@ resource "aws_cloudwatch_metric_alarm" "moderation_iterator_age" {
 
   dimensions = {
     FunctionName = var.moderation_service_function_name
+  }
+}
+
+# --- Likes: counter lag, failed batches, drift, throttling ---------------
+# (docs/rateit-likes-redesign-prd.md section 8)
+
+resource "aws_cloudwatch_metric_alarm" "counter_iterator_age" {
+  alarm_name          = "${var.project_name}-like-counter-falling-behind"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "IteratorAge"
+  namespace           = "AWS/Lambda"
+  period              = 60
+  statistic           = "Maximum"
+  threshold           = var.counter_iterator_age_threshold_ms
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Like counts are more than a minute behind the Likes stream."
+  alarm_actions       = [var.alarm_sns_topic_arn]
+  ok_actions          = [var.alarm_sns_topic_arn]
+
+  dimensions = {
+    FunctionName = var.counter_service_function_name
+  }
+}
+
+# The messages only hold stream metadata, not the likes: fix the cause, then
+# run the Reconciliation Lambda with {"repair": true}.
+resource "aws_cloudwatch_metric_alarm" "like_counter_queue_not_empty" {
+  alarm_name          = "${var.project_name}-like-counter-queue-not-empty"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  namespace           = "AWS/SQS"
+  period              = 300
+  statistic           = "Maximum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "A like-counter batch failed permanently - counts may be off. Fix the cause, then run reconciliation with repair (README)."
+  alarm_actions       = [var.alarm_sns_topic_arn]
+  ok_actions          = [var.alarm_sns_topic_arn]
+
+  dimensions = {
+    QueueName = var.like_counter_queue_name
+  }
+}
+
+# Published by the weekly reconciliation run (zero when healthy).
+resource "aws_cloudwatch_metric_alarm" "like_count_drift" {
+  alarm_name          = "${var.project_name}-like-count-drift"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "CountDrift"
+  namespace           = "RateIt/Likes"
+  period              = 3600
+  statistic           = "Maximum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Reconciliation found posts whose like count differs from their like rows. Run it with {\"repair\": true}."
+  alarm_actions       = [var.alarm_sns_topic_arn]
+  ok_actions          = [var.alarm_sns_topic_arn]
+}
+
+resource "aws_cloudwatch_metric_alarm" "likes_tables_throttles" {
+  for_each = {
+    likes         = var.dynamodb_likes_table_name
+    like_counters = var.dynamodb_like_counters_table_name
+  }
+
+  alarm_name          = "${var.project_name}-${replace(each.key, "_", "-")}-table-throttles"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "ThrottledRequests"
+  namespace           = "AWS/DynamoDB"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = var.dynamodb_throttle_threshold
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "DynamoDB throttled requests on ${each.value}."
+  alarm_actions       = [var.alarm_sns_topic_arn]
+  ok_actions          = [var.alarm_sns_topic_arn]
+
+  dimensions = {
+    TableName = each.value
   }
 }
 
