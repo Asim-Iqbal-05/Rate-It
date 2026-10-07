@@ -11,14 +11,14 @@ s3_client = boto3.client("s3")
 
 TABLE_NAME = os.environ["TABLE_NAME"]
 UPLOADS_BUCKET = os.environ["UPLOADS_BUCKET"]
-REACTIONS_TABLE = os.environ["REACTIONS_TABLE"]
+LIKE_COUNTERS_TABLE = os.environ["LIKE_COUNTERS_TABLE"]
 
 MAX_TITLE_LENGTH = 100
 MAX_DESCRIPTION_LENGTH = 1000
 MAX_IMAGES = 5
 
 table = dynamodb.Table(TABLE_NAME)
-reactions_table = dynamodb.Table(REACTIONS_TABLE)
+like_counters_table = dynamodb.Table(LIKE_COUNTERS_TABLE)
 
 
 class ValidationError(Exception):
@@ -161,17 +161,16 @@ def _delete_experience(event, user_id):
         raise
 
     # From here the post is gone, which is what the user asked for. A
-    # failed cleanup only leaves harmless orphans (no new likes can
-    # arrive - Reactions Service checks the post exists), so log it and
-    # still return success rather than telling the user it failed.
+    # failed cleanup only leaves harmless orphans, so log it and still
+    # return success rather than telling the user it failed.
     try:
         _delete_images(item.get("imageKeys", []))
     except Exception as e:
         _log_error("delete_images_failed", experience_id, e)
     try:
-        _delete_reactions(experience_id)
+        _delete_like_counter(experience_id)
     except Exception as e:
-        _log_error("delete_reactions_failed", experience_id, e)
+        _log_error("delete_like_counter_failed", experience_id, e)
 
     return {"statusCode": 204}
 
@@ -187,22 +186,13 @@ def _delete_images(image_keys):
         raise RuntimeError(f"S3 failed to delete: {response['Errors']}")
 
 
-def _delete_reactions(experience_id):
-    # batch_writer groups deletes into BatchWriteItem calls of 25 and
-    # resends any UnprocessedItems itself.
-    kwargs = {
-        "KeyConditionExpression": "experienceId = :e",
-        "ExpressionAttributeValues": {":e": experience_id},
-        "ProjectionExpression": "experienceId, userId",
-    }
-    with reactions_table.batch_writer() as batch:
-        while True:
-            page = reactions_table.query(**kwargs)
-            for row in page["Items"]:
-                batch.delete_item(Key={"experienceId": row["experienceId"], "userId": row["userId"]})
-            if "LastEvaluatedKey" not in page:
-                break
-            kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+def _delete_like_counter(experience_id):
+    # Only the post's counter goes. Its like rows are deliberately left in
+    # place: the Likes table is keyed by user, so it can't be queried by
+    # post, and the rows are tiny and never read once the post is gone.
+    # (If likes are still in the stream when the post is deleted, the
+    # Counter Lambda can recreate this counter - also harmless, unread.)
+    like_counters_table.delete_item(Key={"pk": f"POST#{experience_id}"})
 
 
 def _error(status_code, field, message):

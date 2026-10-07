@@ -34,11 +34,19 @@ variable "author_index_name" {
   type = string
 }
 
-variable "reactions_table_name" {
+variable "likes_table_name" {
   type = string
 }
 
-variable "reactions_table_arn" {
+variable "likes_table_arn" {
+  type = string
+}
+
+variable "like_counters_table_name" {
+  type = string
+}
+
+variable "like_counters_table_arn" {
   type = string
 }
 

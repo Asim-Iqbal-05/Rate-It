@@ -16,7 +16,8 @@ dynamodb = boto3.resource("dynamodb")
 TABLE_NAME = os.environ["TABLE_NAME"]
 FEED_INDEX_NAME = os.environ["FEED_INDEX_NAME"]
 AUTHOR_INDEX_NAME = os.environ["AUTHOR_INDEX_NAME"]
-REACTIONS_TABLE_NAME = os.environ["REACTIONS_TABLE_NAME"]
+LIKES_TABLE_NAME = os.environ["LIKES_TABLE_NAME"]
+LIKE_COUNTERS_TABLE_NAME = os.environ["LIKE_COUNTERS_TABLE_NAME"]
 # Public base URL images are served from - CloudFront's /images/*
 # behavior in front of the (still-private) uploads bucket, via OAC
 # (infra PRD Phase 6). Object keys are content-addressed UUIDs that
@@ -24,14 +25,14 @@ REACTIONS_TABLE_NAME = os.environ["REACTIONS_TABLE_NAME"]
 # unlike the presigned URLs this replaced.
 PUBLIC_IMAGE_BASE_URL = os.environ["PUBLIC_IMAGE_BASE_URL"].rstrip("/")
 
-# Each post needs two Reactions keys (count row + the caller's like
-# row) and BatchGetItem accepts at most 100 keys, so PAGE_SIZE must
-# stay at or below 50 (extension PRD §7.6).
+# Each post needs two keys (the caller's like row + the post's counter)
+# and BatchGetItem accepts at most 100 keys, so PAGE_SIZE must stay at
+# or below 50 (extension PRD §7.6).
 PAGE_SIZE = 20
 assert PAGE_SIZE * 2 <= 100
 
-# Sort-key value of the per-post count row in the Reactions table.
-COUNT_ROW = "COUNT"
+# Counter rows in the LikeCounters table are keyed "POST#<experienceId>".
+COUNTER_KEY_PREFIX = "POST#"
 BATCH_GET_MAX_ATTEMPTS = 5
 
 # Time-bucketed GSI partition keys (infra PRD §7.1/§12) - a single
@@ -171,35 +172,48 @@ def fetch_page(author_sub: Optional[str], page_token: Optional[str]):
     return _fetch_global_page(page_token)
 
 
-def _batch_get_reactions(keys: list[dict]) -> list[dict]:
-    found: list[dict] = []
-    pending = {REACTIONS_TABLE_NAME: {"Keys": keys, "ConsistentRead": True}}
+def _batch_get_likes(likes_keys: list[dict], counter_keys: list[dict]) -> dict:
+    """One BatchGetItem spanning both tables, retrying UnprocessedKeys."""
+    found: dict[str, list[dict]] = {LIKES_TABLE_NAME: [], LIKE_COUNTERS_TABLE_NAME: []}
+    pending = {
+        # Consistent, so a like the caller just made shows after a refresh.
+        LIKES_TABLE_NAME: {"Keys": likes_keys, "ConsistentRead": True},
+        LIKE_COUNTERS_TABLE_NAME: {"Keys": counter_keys},
+    }
     for attempt in range(BATCH_GET_MAX_ATTEMPTS):
         response = dynamodb.batch_get_item(RequestItems=pending)
-        found.extend(response["Responses"].get(REACTIONS_TABLE_NAME, []))
+        for table_name, rows in response["Responses"].items():
+            found[table_name].extend(rows)
         pending = response.get("UnprocessedKeys") or {}
         if not pending:
             return found
         time.sleep(0.05 * (2**attempt))
-    raise RuntimeError("Reactions BatchGetItem still had unprocessed keys after retries")
+    raise RuntimeError("Likes BatchGetItem still had unprocessed keys after retries")
 
 
 def decorate(raw_items: list[dict], caller_sub: str) -> list[dict]:
-    """Step 2: per-post like data for this caller. Consistent reads so a
-    like the caller just made shows on their next refresh."""
-    likes: dict[str, dict] = {}
+    """Step 2: per-post like data for this caller."""
+    liked: set[str] = set()
+    stored_counts: dict[str, int] = {}
     if raw_items:
-        keys = []
-        for item in raw_items:
-            keys.append({"experienceId": item["experienceId"], "userId": COUNT_ROW})
-            keys.append({"experienceId": item["experienceId"], "userId": caller_sub})
-        for row in _batch_get_reactions(keys):
-            likes.setdefault(row["experienceId"], {})[row["userId"]] = row
+        found = _batch_get_likes(
+            [{"userId": caller_sub, "experienceId": i["experienceId"]} for i in raw_items],
+            [{"pk": f"{COUNTER_KEY_PREFIX}{i['experienceId']}"} for i in raw_items],
+        )
+        liked = {row["experienceId"] for row in found[LIKES_TABLE_NAME]}
+        stored_counts = {
+            row["pk"][len(COUNTER_KEY_PREFIX):]: int(row["likeCount"])
+            for row in found[LIKE_COUNTERS_TABLE_NAME]
+        }
 
     items = []
     for item in raw_items:
-        post_likes = likes.get(item["experienceId"], {})
-        count_row = post_likes.get(COUNT_ROW)
+        liked_by_me = item["experienceId"] in liked
+        # The counter is derived from the like rows and lags them by a
+        # couple of seconds. max() covers that window for the liker: the
+        # like row exists but the counter hasn't caught up, and without it
+        # they could briefly see a filled heart beside a count of zero.
+        like_count = max(stored_counts.get(item["experienceId"], 0), 1 if liked_by_me else 0, 0)
         removed = bool(item.get("removed", False))
         items.append(
             {
@@ -212,8 +226,8 @@ def decorate(raw_items: list[dict], caller_sub: str) -> list[dict]:
                 # no images.
                 "imageUrls": [] if removed else _image_urls(item.get("imageKeys", [])),
                 "createdAt": item["CreatedAt"],
-                "likeCount": int(count_row["likeCount"]) if count_row else 0,
-                "likedByMe": caller_sub in post_likes,
+                "likeCount": like_count,
+                "likedByMe": liked_by_me,
                 "removed": removed,
             }
         )

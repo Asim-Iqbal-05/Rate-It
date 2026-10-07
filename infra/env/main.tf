@@ -56,11 +56,12 @@ data "aws_iam_policy_document" "experience_service" {
     resources = [module.dynamodb.table_arn]
   }
 
-  # Deleting a post also removes its likes and image files.
+  # Deleting a post also removes its like counter (its like rows are left
+  # behind on purpose) and its image files.
   statement {
-    sid       = "DeletePostReactions"
-    actions   = ["dynamodb:Query", "dynamodb:BatchWriteItem"]
-    resources = [module.dynamodb.reactions_table_arn]
+    sid       = "DeletePostLikeCounter"
+    actions   = ["dynamodb:DeleteItem"]
+    resources = [module.dynamodb.like_counters_table_arn]
   }
 
   statement {
@@ -82,14 +83,10 @@ module "experience_service" {
   function_name = "${var.project_name}-experience-service"
   source_dir    = "${path.module}/../../services/experience"
   handler       = "handler.lambda_handler"
-  # 30s is API Gateway's integration ceiling - room to delete a post with
-  # many likes (extension PRD §7.4).
-  timeout = 30
-
   environment_variables = {
-    TABLE_NAME      = module.dynamodb.table_name
-    UPLOADS_BUCKET  = module.s3_uploads.bucket_name
-    REACTIONS_TABLE = module.dynamodb.reactions_table_name
+    TABLE_NAME          = module.dynamodb.table_name
+    UPLOADS_BUCKET      = module.s3_uploads.bucket_name
+    LIKE_COUNTERS_TABLE = module.dynamodb.like_counters_table_name
   }
 
   additional_policy_json = data.aws_iam_policy_document.experience_service.json
@@ -99,16 +96,16 @@ module "experience_service" {
 
 data "aws_iam_policy_document" "reactions_service" {
   statement {
-    sid       = "WriteReactions"
-    actions   = ["dynamodb:PutItem", "dynamodb:DeleteItem", "dynamodb:UpdateItem"]
-    resources = [module.dynamodb.reactions_table_arn]
+    sid       = "WriteLikes"
+    actions   = ["dynamodb:PutItem", "dynamodb:DeleteItem"]
+    resources = [module.dynamodb.likes_table_arn]
   }
 
-  # Read-only existence check on the post inside the like transaction -
-  # no write access to Experiences (extension PRD §4, invariant 1).
+  # A plain read to check the post exists - no write access to Experiences
+  # (extension PRD §4, invariant 1).
   statement {
     sid       = "CheckPostExists"
-    actions   = ["dynamodb:ConditionCheckItem"]
+    actions   = ["dynamodb:GetItem"]
     resources = [module.dynamodb.table_arn]
   }
 }
@@ -124,7 +121,7 @@ module "reactions_service" {
   timeout          = 5
 
   environment_variables = {
-    REACTIONS_TABLE   = module.dynamodb.reactions_table_name
+    LIKES_TABLE       = module.dynamodb.likes_table_name
     EXPERIENCES_TABLE = module.dynamodb.table_name
   }
 
@@ -552,9 +549,11 @@ module "ecs_feed_service" {
   table_arn       = module.dynamodb.table_arn
   feed_index_name = module.dynamodb.feed_index_name
 
-  author_index_name    = module.dynamodb.author_index_name
-  reactions_table_name = module.dynamodb.reactions_table_name
-  reactions_table_arn  = module.dynamodb.reactions_table_arn
+  author_index_name        = module.dynamodb.author_index_name
+  likes_table_name         = module.dynamodb.likes_table_name
+  likes_table_arn          = module.dynamodb.likes_table_arn
+  like_counters_table_name = module.dynamodb.like_counters_table_name
+  like_counters_table_arn  = module.dynamodb.like_counters_table_arn
 
   public_image_base_url = "https://${var.custom_domain_name}"
 
