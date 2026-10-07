@@ -108,25 +108,6 @@ resource "aws_cloudwatch_metric_alarm" "dynamodb_throttles" {
   }
 }
 
-resource "aws_cloudwatch_metric_alarm" "reactions_table_throttles" {
-  alarm_name          = "${var.project_name}-reactions-table-throttles"
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 1
-  metric_name         = "ThrottledRequests"
-  namespace           = "AWS/DynamoDB"
-  period              = 300
-  statistic           = "Sum"
-  threshold           = var.dynamodb_throttle_threshold
-  treat_missing_data  = "notBreaching"
-  alarm_description   = "DynamoDB throttled requests on the reactions table."
-  alarm_actions       = [var.alarm_sns_topic_arn]
-  ok_actions          = [var.alarm_sns_topic_arn]
-
-  dimensions = {
-    TableName = var.dynamodb_reactions_table_name
-  }
-}
-
 # Per-index throttling on the Experiences table. Index-level metrics
 # aren't included in the table-level ThrottledRequests alarm above.
 resource "aws_cloudwatch_metric_alarm" "experiences_index_throttles" {

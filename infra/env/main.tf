@@ -703,9 +703,8 @@ module "observability" {
   target_group_blue_arn_suffix  = module.ecs_feed_service.target_group_blue_arn_suffix
   target_group_green_arn_suffix = module.ecs_feed_service.target_group_green_arn_suffix
 
-  dynamodb_table_name           = module.dynamodb.table_name
-  dynamodb_index_names          = [module.dynamodb.feed_index_name, module.dynamodb.author_index_name]
-  dynamodb_reactions_table_name = module.dynamodb.reactions_table_name
+  dynamodb_table_name  = module.dynamodb.table_name
+  dynamodb_index_names = [module.dynamodb.feed_index_name, module.dynamodb.author_index_name]
 
   waf_web_acl_name           = module.waf.web_acl_name
   waf_token_rule_metric_name = module.waf.token_rule_metric_name

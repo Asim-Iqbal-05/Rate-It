@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""ONE-OFF: copy like rows from the old Reactions table into the new Likes table.
+"""ONE-OFF (already run, kept as a record): copy like rows from the old Reactions
+table into the new Likes table. The old table has since been removed, so this
+no longer runs.
 
 Part of the likes redesign migration (docs/rateit-likes-redesign-prd.md
 section 9, step 3). Run it ONCE, right after the app changes are deployed.

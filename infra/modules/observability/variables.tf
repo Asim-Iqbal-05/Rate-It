@@ -70,10 +70,6 @@ variable "dynamodb_index_names" {
   type        = list(string)
 }
 
-variable "dynamodb_reactions_table_name" {
-  type = string
-}
-
 # WAF is CloudFront-scoped, so its CloudWatch metrics always publish to
 # us-east-1 regardless of the app's home region - these alarms need the
 # us_east_1 provider alias, same reason ACM/WAF resources themselves do.

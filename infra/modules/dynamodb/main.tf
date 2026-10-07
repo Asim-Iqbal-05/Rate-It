@@ -62,38 +62,10 @@ resource "aws_dynamodb_table" "experiences" {
   }
 }
 
-# Likes and like counts live here and ONLY here (extension PRD §4,
-# invariant 2) so a like never writes to the Experiences table or its
-# feed GSI. Two item kinds share the table: one row per like
-# (userId = the liker's Cognito sub) and one count row per post
-# (userId = the literal "COUNT" - a Cognito sub is a UUID, so the two
-# can never collide). A missing count row means zero likes.
-resource "aws_dynamodb_table" "reactions" {
-  name         = "${var.project_name}-reactions"
-  billing_mode = "PAY_PER_REQUEST"
-
-  hash_key  = "experienceId"
-  range_key = "userId"
-
-  attribute {
-    name = "experienceId"
-    type = "S"
-  }
-
-  attribute {
-    name = "userId"
-    type = "S"
-  }
-
-  point_in_time_recovery {
-    enabled = true
-  }
-}
-
 # --- Likes redesign (docs/rateit-likes-redesign-prd.md) ---------------------
-# Likes (source of truth) and LikeCounters (derived counts) replace the
-# Reactions table above, which is removed in a later, separate apply once
-# the data has been migrated and verified.
+# Likes (source of truth) and LikeCounters (derived counts). They replaced
+# the original Reactions table (one row per like plus a COUNT row, keyed by
+# post), which was removed once its data had been migrated and verified.
 
 # One row per like. Keyed by user FIRST so writes spread evenly across
 # partitions (no single user likes fast enough to matter). The cost is that
