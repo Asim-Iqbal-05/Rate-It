@@ -56,10 +56,20 @@ export interface UploadUrlResponse {
   imageKey: string;
 }
 
+// Rekognition (moderation) only reads JPEG and PNG, so those are the
+// only upload types the backend issues URLs for (extension PRD §7.5).
+// Mirrors ALLOWED_CONTENT_TYPES in services/media/handler.py - keep in sync.
+export const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png"];
+
 export async function getUploadUrl(
   getIdToken: () => Promise<string | null>,
+  contentType: string,
 ): Promise<UploadUrlResponse> {
-  const res = await apiFetch("/api/media/upload-url", getIdToken, { method: "GET" });
+  const res = await apiFetch(
+    `/api/media/upload-url?contentType=${encodeURIComponent(contentType)}`,
+    getIdToken,
+    { method: "GET" },
+  );
   if (!res.ok) {
     throw new Error("Could not get an upload URL");
   }
@@ -80,16 +90,13 @@ export async function uploadImageToS3(
   for (const [key, value] of Object.entries(fields)) {
     formData.append(key, value);
   }
-  // The S3 POST policy requires Content-Type to start with "image/"
-  // (services/media/handler.py). Some browsers - notably iOS Safari
-  // picking a photo straight from the library - report an empty or
-  // unexpected file.type (e.g. for HEIC photos not yet fully
-  // downloaded from iCloud), which would otherwise fail that policy
-  // outright. The server never actually inspects real file bytes
-  // either way (a documented soft check), so falling back to a
-  // generic image type here costs nothing and closes that failure.
-  const contentType = file.type.startsWith("image/") ? file.type : "image/jpeg";
-  formData.append("Content-Type", contentType);
+  // The S3 POST policy requires Content-Type to equal the type the upload
+  // URL was requested for. The server includes it in `fields` once it
+  // enforces that; until then (and as a fallback) send the file's own
+  // type, which is the same value the URL was requested with.
+  if (!("Content-Type" in fields)) {
+    formData.append("Content-Type", file.type);
+  }
   formData.append("file", file);
 
   const res = await fetch(url, { method: "POST", body: formData });

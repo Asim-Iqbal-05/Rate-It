@@ -2,6 +2,7 @@ import { useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import {
+  ALLOWED_IMAGE_TYPES,
   getUploadUrl,
   uploadImageToS3,
   createExperience,
@@ -23,6 +24,12 @@ const LARGE_FILE_WARNING_BYTES = 8 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 // Mirrors MAX_IMAGES in services/experience/handler.py - keep in sync.
 const MAX_IMAGES = 5;
+
+// Files that can never upload, so retrying is pointless - too big for
+// S3's POST policy, or not a type the backend will issue a URL for.
+const isTooLarge = (file: File) => file.size > MAX_UPLOAD_BYTES;
+const isUnsupportedType = (file: File) => !ALLOWED_IMAGE_TYPES.includes(file.type);
+const isPermanentFailure = (file: File) => isTooLarge(file) || isUnsupportedType(file);
 
 type UploadStatus = "uploading" | "uploaded" | "error";
 
@@ -59,7 +66,7 @@ export function NewExperiencePage() {
   const runUpload = async (item: ImageItem) => {
     updateImage(item.id, { status: "uploading", error: null });
     try {
-      const uploadUrl = await getUploadUrl(getIdToken);
+      const uploadUrl = await getUploadUrl(getIdToken, item.file.type);
       await uploadImageToS3(uploadUrl, item.file);
       updateImage(item.id, { status: "uploaded", imageKey: uploadUrl.imageKey });
     } catch (err) {
@@ -84,16 +91,19 @@ export function NewExperiencePage() {
     const toAdd = picked.slice(0, room);
 
     const newItems: ImageItem[] = toAdd.map((file) => {
-      const tooLarge = file.size > MAX_UPLOAD_BYTES;
+      const unsupported = isUnsupportedType(file);
+      const tooLarge = isTooLarge(file);
       return {
         id: crypto.randomUUID(),
         file,
         previewUrl: URL.createObjectURL(file),
-        status: tooLarge ? "error" : "uploading",
+        status: unsupported || tooLarge ? "error" : "uploading",
         imageKey: null,
-        error: tooLarge
-          ? `That file is over the ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB limit - pick a smaller one.`
-          : null,
+        error: unsupported
+          ? "Only JPEG and PNG photos are supported."
+          : tooLarge
+            ? `That file is over the ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB limit - pick a smaller one.`
+            : null,
         large: file.size > LARGE_FILE_WARNING_BYTES,
       };
     });
@@ -162,7 +172,7 @@ export function NewExperiencePage() {
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*"
+              accept={ALLOWED_IMAGE_TYPES.join(",")}
               multiple
               onChange={handleFilesChange}
               className="hidden"
@@ -202,7 +212,7 @@ export function NewExperiencePage() {
                     </span>
                   )}
 
-                  {img.status === "error" && img.file.size <= MAX_UPLOAD_BYTES && (
+                  {img.status === "error" && !isPermanentFailure(img.file) && (
                     <button
                       type="button"
                       onClick={() => runUpload(img)}
@@ -212,9 +222,9 @@ export function NewExperiencePage() {
                     </button>
                   )}
 
-                  {img.status === "error" && img.file.size > MAX_UPLOAD_BYTES && (
+                  {img.status === "error" && isPermanentFailure(img.file) && (
                     <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-red-950/60 p-1 text-center text-[10px] font-medium text-white">
-                      Too large
+                      {isUnsupportedType(img.file) ? "JPEG/PNG only" : "Too large"}
                     </div>
                   )}
 
@@ -260,13 +270,19 @@ export function NewExperiencePage() {
               {images.some((img) => img.large) && " - large files may take a moment to upload"}
             </p>
 
-            {images.some((img) => img.status === "error" && img.file.size > MAX_UPLOAD_BYTES) && (
+            {images.some((img) => img.status === "error" && isUnsupportedType(img.file)) && (
+              <Alert variant="error">
+                Only JPEG and PNG photos are supported - remove the highlighted photos and pick a different file.
+              </Alert>
+            )}
+
+            {images.some((img) => img.status === "error" && isTooLarge(img.file)) && (
               <Alert variant="error">
                 {`One or more photos are over the ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB limit - remove them and pick a smaller file.`}
               </Alert>
             )}
 
-            {images.some((img) => img.status === "error" && img.file.size <= MAX_UPLOAD_BYTES) && (
+            {images.some((img) => img.status === "error" && !isPermanentFailure(img.file)) && (
               <Alert variant="error">One or more photos failed to upload - tap to retry.</Alert>
             )}
           </div>
