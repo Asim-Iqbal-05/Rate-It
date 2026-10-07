@@ -35,11 +35,12 @@ CloudFront (single entry point, HTTPS enforced, OAC to origins)
   (Lambda)        (Lambda)             (Lambda)                 │
         │               │                    │             Internal ALB
         S3        DynamoDB, S3          DynamoDB                │
-                  (post + delete)    (Reactions table)   ECS Fargate: Feed Service
+                  (post + delete)    (Likes table)       ECS Fargate: Feed Service
                                                                 │
-                                                  DynamoDB (Experiences GSIs + Reactions)
+                                      DynamoDB (Experiences GSIs + Likes + LikeCounters)
 
   Async, not on the request path:
+  Likes stream (INSERT/REMOVE) → Counter Lambda → LikeCounters table   (+ weekly Reconciliation Lambda)
   Experiences stream (INSERT) → Moderation Service (Lambda) → S3 (read) + Rekognition
                                         │ failures → SQS dead-letter queue
                                         └ redrive mapping (disabled until an operator enables it)
@@ -48,7 +49,7 @@ CloudFront (single entry point, HTTPS enforced, OAC to origins)
 **WAF placement — deviation from the original diagram, decided during Phase 7:** originally drawn sitting directly in front of API Gateway. In practice, AWS WAF's `AssociateWebACL` does not support HTTP API (v2) stages as a resource type at all (only REST API stages, ALB, AppSync, Cognito pools, App Runner, Verified Access, Amplify) — confirmed against the live AWS API reference, not assumed. WAF is attached to CloudFront instead (`web_acl_id` directly on the distribution), which also means it now covers every path, not just `/api/*` — a strictly broader protection surface than originally planned, not a narrower one.
 
 **Compute split rationale:**
-- **Media, Experience, Reactions & Moderation Services** — short, stateless, single-purpose (sign a URL, write or delete one post, toggle a like, check a post's images). No long-lived process needed, no VPC-only dependency. Lambda fits exactly; none runs inside a VPC. Moderation is the one that is not on a request path: it is triggered by the DynamoDB stream.
+- **Media, Experience, Reactions, Moderation, Counter & Reconciliation Services** — short, stateless, single-purpose (sign a URL, write or delete one post, toggle a like, check a post's images). No long-lived process needed, no VPC-only dependency. Lambda fits exactly; none runs inside a VPC. Moderation is the one that is not on a request path: it is triggered by the DynamoDB stream.
 - **Feed Service** — the one service likely to benefit from a long-lived process (connection pooling, future in-memory caching). Runs on ECS Fargate behind an internal ALB to preserve native blue/green deployments.
 
 ---
@@ -116,10 +117,10 @@ Authentication answers *who are you*; it does not answer *how many times per sec
 - Feed GSI `TypeCreatedAtIndex`: `Type` (PK) + `CreatedAt` (SK) drives chronological feed reads. `Type` is a **monthly bucket** (`POST#YYYY-MM`); Feed Service reads the current month first and walks back month by month to fill a page (bounded to 24 months). There is no feed cache (§12).
 - Author GSI `userId-CreatedAt-index`: `userId` (PK) + `CreatedAt` (SK), projection `ALL`, used by "My posts" (`GET /api/feed?author=me`). A taken-down post has no `Type` so it is absent from the feed GSI, but it keeps `userId` so its author still sees it.
 - Stream: `NEW_IMAGE`, consumed only by the Moderation Service, filtered to `INSERT`.
-- A second table, `Reactions`, holds likes (§13).
+- Two more tables hold likes (§13.1): `Likes` (the rows) and `LikeCounters` (the derived counts).
 - **Design invariants — the feed GSI is the one shared hot spot, so nothing frequent may write to it:**
   1. A post item is written only at **creation, takedown and delete**. Never for a like, an unlike, or a clean moderation result. A post that passes moderation gets no write at all; there is no stored "approved" status, and the absence of `removed` means the post is live.
-  2. Likes and like counts live **only** in the `Reactions` table. No like data is stored on, or projected from, a post item.
+  2. Likes and like counts live **only** in the `Likes` and `LikeCounters` tables. No like data is stored on, or projected from, a post item.
   3. Do not add frequently changing attributes to post items: the feed GSI projects `ALL`, so any attribute added to a post is copied into the index and every update to it becomes an index write.
 - **Known limits and upgrade paths:** see §12 and §13.4 (single-post like rate, feed page loads on one GSI partition, new-post rate into the current month).
 
@@ -155,7 +156,7 @@ Uses **ECS's built-in blue/green deployment capability** (deployment controller 
 
 **Image pull dependency:** every task launch (deploy, restart, scale event, cutover) requires a fresh ECR pull, which depends on both the ECR interface endpoints *and* the S3 gateway endpoint (§3). Verify in a lower environment before first prod deployment.
 
-### 8.2 Lambda Services (Media, Experience, Reactions, Moderation)
+### 8.2 Lambda Services (Media, Experience, Reactions, Moderation, Counter, Reconciliation)
 - Deploy via **versioned aliases** managed by Terraform. Each deploy publishes a new version and updates the alias.
 - New functions get their **log group created in Terraform** (`manage_log_group`): the account's SCP rejects untagged `CreateLogGroup`, which is what Lambda's automatic creation sends, so without it the function silently has no logs.
 - Traffic-shifted canary releases are a **future** Terraform-level config addition (weighted alias routing) — not needed for v1, not a rearchitecture when it's wanted.
@@ -168,7 +169,7 @@ Blue/green (full flip with bake-time rollback) is the right amount of safety for
 ## 9. Observability
 
 - **CloudWatch Logs** for all three services (Lambda logs natively; Fargate ships via the VPC interface endpoint).
-- **CloudWatch Alarms** on: Lambda error rate/duration (all four Lambdas; moderation errors only, since its duration is dominated by Rekognition), ECS task health, ALB target group health, DynamoDB throttled requests on both tables **and on each `Experiences` index** (a throttled index also throttles base-table writes), WAF blocked-request rate, **moderation queue not empty** and **moderation stream falling behind** (`IteratorAge` > 5 min). Notifications go to the SNS email topic (plus a second us-east-1 topic for the WAF alarms).
+- **CloudWatch Alarms** on: Lambda error rate/duration (all four Lambdas; moderation errors only, since its duration is dominated by Rekognition), ECS task health, ALB target group health, DynamoDB throttled requests on every table (`Likes` and `LikeCounters` included) **and on each `Experiences` index** (a throttled index also throttles base-table writes), WAF blocked-request rate, **moderation queue not empty** and **moderation stream falling behind** (`IteratorAge` > 5 min), plus for likes: **counter falling behind** (`IteratorAge` > 60 s), **like-counter queue not empty**, counter/reconciliation errors, and **count drift** (the weekly reconciliation's metric). Notifications go to the SNS email topic (plus a second us-east-1 topic for the WAF alarms).
 - The Moderation Service writes one structured log line per decision: `experienceId`, `outcome` (`clean`, `removed`, `queued`), `reason`, `durationMs`.
 - Alarm thresholds live in checked-in per-environment `.tfvars` (see §10) — changed only via reviewed PR, not ad hoc.
 - Bake-time rollback decisions should be backed by an alarm or lifecycle-hook check, not manual observation, once traffic justifies it.
@@ -250,12 +251,17 @@ Remote state backend (S3 + DynamoDB lock table), provider config, environment sc
 
 Full specification: `rateit-extension-prd.md`. This section records what is built.
 
-### 13.1 Reactions Service (Lambda, outside the VPC)
-- `Reactions` table (on-demand, PITR): partition key `experienceId`, sort key `userId`. A **like row** has the liker's Cognito `sub` as `userId`; a **count row** has the literal `COUNT` (a `sub` is a UUID, so they can never collide) and a `likeCount`. A missing count row means zero likes.
-- **Like** = one `TransactWriteItems`: `ConditionCheck` that the post exists and is not `removed`, `Put` the like row (`attribute_not_exists`), `Update` the count (`ADD 1`). A failed first condition is `404`; a failed second one means already liked (`204`). Contention is retried with backoff, then `503`.
-- **Unlike** = `Delete` the like row (`attribute_exists`) plus `ADD -1`, so the count cannot go below zero; not-liked is `204`.
-- The `ConditionCheck` reads but does not write the post, so invariant 1 holds. Note DynamoDB **bills** a condition check as 2 write units on `Experiences` (observed via `ReturnConsumedCapacity`); neither index is charged and no stream record is produced, so the invariant is "no index writes", not "zero consumed write capacity".
-- Routes: `PUT` and `DELETE /api/experiences/{experienceId}/like`. 256 MB, 5 s.
+### 13.1 Likes: Reactions Service, Counter, Reconciliation (Lambda, outside the VPC)
+Redesigned after launch (`rateit-likes-redesign-prd.md`) so a like is one cheap write and no single post has a like-rate ceiling. **The public API is unchanged.**
+
+- **`Likes` table** (on-demand, PITR, stream `KEYS_ONLY`): partition key `userId` (the liker's Cognito `sub`), sort key `experienceId`, plus `createdAt`. **The like row is the source of truth** and is written before the user gets a response. Keyed by user first so writes spread evenly. There is deliberately **no index on `experienceId`** (it would recreate the hot partition) — so the table cannot list who liked a post, and nothing needs that.
+- **`LikeCounters` table** (on-demand, TTL on `expiresAt`): `pk = POST#<experienceId>` holds `likeCount`; `pk = BATCH#<batchId>#<chunk>` are 48-hour idempotency markers. A missing counter means zero likes.
+- **Reactions Service** (256 MB, 5 s): **like** = a plain read of the post (missing or `removed` → `404`) then one `PutItem` into `Likes` with `attribute_not_exists(userId)`; a failed condition means already liked → `204`. **Unlike** = one `DeleteItem` with `attribute_exists(userId)`; failed condition → `204`. No transactions and no counts. A failed condition changes nothing, so it produces no stream event and can never be counted. Neither route writes to `Experiences` (invariant 1) — the earlier design's 2-write-unit `ConditionCheck` is gone. Routes: `PUT`/`DELETE /api/experiences/{experienceId}/like`.
+- **Counter Lambda** (256 MB, 30 s): triggered by the `Likes` stream, `INSERT`/`REMOVE` only, batch 500 with a 2 s window, parallelization 1, 10 retries, 6 h max record age, failures to `rateit-like-counter-dlq`. It sums +1/−1 per post, drops net-zero posts, and applies the rest in one `TransactWriteItems` per ≤99 posts. Each transaction also writes a marker `BATCH#<hash of first eventID, last eventID, count>#<chunk>` (`attribute_not_exists`, put first), so a batch Lambda delivers twice is detected and applied zero additional times. **Batch bisecting and partial-batch responses are deliberately OFF**: the duplicate protection requires a retried batch to be identical to the original, and both features change its boundaries. Measured live: 200 simultaneous likes on one post became 9 counter updates and ended at exactly 200.
+- **The count is derived and lags a like by about 2 s.** Feed Service reads the caller's like row (consistent) and the counter in one `BatchGetItem` (two keys per post, page size ≤ 50) and returns `likeCount = max(stored, likedByMe ? 1 : 0, 0)`, so the liker never sees a filled heart beside zero.
+- **Reconciliation Lambda** (512 MB, 300 s): weekly (Saturday 21:00 UTC via EventBridge Scheduler, detect only) and invocable by hand. Detect compares real like rows with counters and publishes the `RateIt/Likes` `CountDrift` metric (0 when healthy); `{"repair": true}` applies `ADD` (actual − stored), never `SET`, so concurrent likes are not overwritten. It **ignores deleted posts** (their like rows outlive them) and reports a difference only if it is identical on two passes 10 s apart (so counter lag is not drift). A scan inside one Lambda is fine to a few million like rows; beyond that move to a DynamoDB export to S3.
+- **Accepted trade-offs** (also in the README): deleting a post leaves its like rows behind (harmless, never read); no "who liked this" query; a counter can reappear — even briefly negative — if likes are still in the stream when its post is deleted (nothing reads it, and the feed clamps at 0).
+- **Migration** was done live in one pass: new tables and Lambdas first, then the app switched over, then `scripts/one-off/likes-redesign/backfill_likes.py` copied the existing like rows (the Counter rebuilt the counts; reconciliation confirmed 0 drift). The old `Reactions` table is retained, unused, until it is removed in a separate apply.
 
 ### 13.2 Moderation Service (Lambda, outside the VPC) and the dead-letter queue
 - One function, two triggers, told apart by `eventSource`. 512 MB, 60 s.
@@ -266,13 +272,13 @@ Full specification: `rateit-extension-prd.md`. This section records what is buil
 - **Queue** `rateit-moderation-dlq`: standard, SSE on, 14-day retention, 360 s visibility. **Redrive mapping** (queue → function, batch 5) is created **disabled** on purpose; enabling it is an operator action (README runbook), and a later `terraform apply` resetting it to disabled is intended. The redrive path re-reads the post, skips it if deleted or already removed, and returns failures to the queue without re-queueing; Lambda's own stream-failure pointer messages (no `experienceId`) are logged at error level with their full body and dropped.
 
 ### 13.3 Post management and feed changes
-- **Delete own post** (`DELETE /api/experiences/{experienceId}`, Experience Service, now 30 s): `GetItem` (`404` missing, `403` not yours), conditional `DeleteItem` (leaves both GSIs, so the post leaves the feed immediately), then best-effort deletion of the S3 objects and all `Reactions` rows. A cleanup failure is logged with the `experienceId` and still returns `204`; leftovers are harmless orphans because new likes need the post to exist.
-- **Feed Service** is two steps — `fetch_page` (identical for every caller; the cache seam) and `decorate` (one consistent `BatchGetItem` on `Reactions`, two keys per post, so page size must stay ≤ 50) — and takes `author=me` (author GSI, taken-down posts included with `removed: true` and empty `imageUrls`).
+- **Delete own post** (`DELETE /api/experiences/{experienceId}`, Experience Service, now 30 s): `GetItem` (`404` missing, `403` not yours), conditional `DeleteItem` (leaves both GSIs, so the post leaves the feed immediately), then best-effort deletion of the S3 objects and the post's `LikeCounters` row (its like rows are deliberately left, §13.1). A cleanup failure is logged with the `experienceId` and still returns `204`; leftovers are harmless orphans. The Experience Lambda is back to its default timeout, since delete no longer walks likes.
+- **Feed Service** is two steps — `fetch_page` (identical for every caller; the cache seam) and `decorate` (one `BatchGetItem` spanning `Likes` and `LikeCounters`, two keys per post, so page size must stay ≤ 50) — and takes `author=me` (author GSI, taken-down posts included with `removed: true` and empty `imageUrls`).
 - The global feed never contains removed posts. **Known limitation:** a removed post's images stay reachable through `/images/*` for anyone who already has the URL.
 
 ### 13.4 Capacity notes (none need action now)
 | Limit | Rough ceiling | How to raise it later |
 |---|---|---|
-| Likes on a single post | ~250/s (every like updates that post's one count row) | Stop updating the count in the transaction; add a stream on `Reactions` and a small Lambda that sums likes in batches. |
+| Likes on a single post | Not limited per post (a like is one write to a per-user partition; counts are batched from the stream) | Already done — this is what the likes redesign (§13.1) delivered. One user can still like ~1,000/s, which no one reaches. |
 | Feed page loads | ~1,200/s on one GSI partition | Wrap `fetch_page` in the post-authorizer cache described in §12. |
 | New posts | Several hundred/s into the current month's partition | Add a shard suffix to the `Type` value (requires rewriting existing values). |

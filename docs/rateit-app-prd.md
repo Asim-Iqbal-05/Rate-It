@@ -194,7 +194,7 @@ Mirrors the backend `Experiences` table — the frontend should treat these as r
 | `rating` | number | Client-provided, 1–5. |
 | `imageUrls` | string[] | Server-resolved, 1–5 entries; frontend renders each as an `<img>` src. |
 | `createdAt` | string (ISO) | Server-generated, drives sort order. |
-| `likeCount` | number | Server-computed from the `Reactions` table; 0 when nobody has liked it. |
+| `likeCount` | number | Derived count; 0 when nobody has liked it. It can lag a like by about 2 seconds, except for the liker, who always sees at least 1 on a post they have liked. |
 | `likedByMe` | boolean | Whether the signed-in user has liked it. |
 | `removed` | boolean | `true` only for the caller's own taken-down posts in "My posts". |
 
