@@ -38,3 +38,5 @@ frontend/.vite/
 
 # Personal reference notes - not part of the project's committed docs
 docs/postmortem-*.md
+docs/CE-INT-*.md
+rateit-likes-redesign-prd.md
