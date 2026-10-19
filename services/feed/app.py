@@ -84,13 +84,13 @@ def _image_urls(image_keys: list[str]) -> list[str]:
     return [f"{PUBLIC_IMAGE_BASE_URL}/images/{key}" for key in image_keys]
 
 
-# @app.get("/health")
-# def health():
-#     return {"status": "ok"}
-
 @app.get("/health")
 def health():
-    raise HTTPException(status_code=503, detail="deliberate failure")
+    return {"status": "ok"}
+
+# @app.get("/health")
+# def health():
+#     raise HTTPException(status_code=503, detail="deliberate failure")
 
 
 
