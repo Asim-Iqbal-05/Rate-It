@@ -86,7 +86,7 @@ def _image_urls(image_keys: list[str]) -> list[str]:
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    raise HTTPException(status_code=503, detail="deliberate failure")
 
 # @app.get("/health")
 # def health():
